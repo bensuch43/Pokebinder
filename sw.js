@@ -2,8 +2,8 @@
    - App shell: network-first, falls back to cache (so updates arrive when online)
    - Card images (images.pokemontcg.io): cache-first, capped
    - API calls: always network (the app keeps its own card cache in IndexedDB) */
-const VERSION = 'pb-v2.3.0';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
+const VERSION = 'pb-v2.4.0';
+const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
 const IMG_CACHE = 'pb-img-v1';
 const IMG_MAX = 3000;   // ~30–60 MB of small card images
 

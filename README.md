@@ -1,32 +1,40 @@
-# PokéBinder Studio v2
+# PokéBinder Studio v2.4
 
-Track Pokémon TCG collections, plan which binder pocket each card goes in, print binder guides and placeholder cards, and export filtered want lists. Runs entirely in the browser and works offline once it's loaded.
+Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `index.html` | The whole app: HTML, CSS and JS, with no external dependencies |
+| `index.html` | Page structure, styles and icons |
+| `app.js` | All the app logic. It's kept separate so a strict Content Security Policy can block injected scripts |
 | `sw.js` | Service worker that handles offline mode and caches card images |
+| `SECURITY.md` | Security review findings and what was fixed |
 | `manifest.webmanifest`, `icon*.png`, `icon.svg` | Lets you install it as an app (PWA) |
 
 ## Hosting
 
-Put all the files in one folder on any static host. GitHub Pages works and is the same pattern as Little Plates. The app needs HTTPS for offline mode and install. If you open `index.html` straight from disk it still works, but there's no service worker, so no offline mode or install.
+Put all the files in one folder on any static host, and keep `app.js` next to `index.html`. GitHub Pages works and is the same pattern as Little Plates. The app needs HTTPS for offline mode and install. If you open `index.html` straight from disk it still works, but there's no service worker, so no offline mode or install.
 
 ## Using it
 
-1. **Add cards**: search by artist, set, card name, or an advanced [Lucene query](https://docs.pokemontcg.io/api-reference/cards/search-cards). Untick anything you don't want, then add the cards to the current collection or a new one.
-2. **Tick cards off**: tap a pocket in Binder view or a row in Checklist view. Tap ⓘ for card details, the exact binder position, copy to another collection, or remove.
-3. **Collection settings** (⚙︎): set the pocket layout (4, 9, 12 or 16), the binder order (release date, Pokédex number, set, name) and whether each set starts on a new page.
-4. **Filters** (set, status, rarity, text) apply to every view, and you can carry them into export and print.
-5. **Print**: binder guide (a pocket map with tick boxes), placeholder cards (true 63 × 88 mm, 9 per A4, print at 100% scale) or a checklist.
-6. **Export**: a CSV that opens in Excel with page and slot columns, a text want list (with copy to clipboard), or JSON. **Full backup and restore** is how you move data between devices. A merge combines matching collections.
+1. **Add cards**: search by artist, set or card name, or by **printed code**: type what's at the bottom of the card, e.g. `PBL 42, MEW 1, SVI 107/198`, which is handy for sorting a pile of pulls. There's also an advanced [Lucene query](https://docs.pokemontcg.io/api-reference/cards/search-cards) option. Untick anything you don't want, then add the cards to the current collection or a new one.
+2. **Tick cards off**: tap a pocket in Binder view or a row in Checklist view. Ticking means "I have one".
+3. **Card details** (ⓘ): log how many copies you have of each printing (normal, reverse holo, holo, 1st edition), plus condition, the price you paid and the date. Extra copies become **spares**. This panel also shows the exact binder position and lets you copy the card to another collection or remove it.
+4. **Collection settings** (pencil icon): set the pocket layout (4, 9, 12 or 16), the binder order (release date, Pokédex number, set, name) and whether each set starts on a new page. Tick **Master set** to give every printing its own pocket. The app works out which printings exist from the price data and fetches it if needed.
+5. **Overview**: a chart of collection value over time (one point per day from the prices you've fetched), plus completion and cost to complete for each set.
+6. **Trades**: your spares with their values, **Share trade list** and **Share want list** links, and a trade calculator. Add what you'd give (from your spares) and what you'd get (search by name or printed code) to see who comes out ahead at current GBP prices. **Apply** updates your quantities, with undo.
+7. **Filters** (set, status including **Spares**, rarity, text) apply to every view, and you can carry them into export and print.
+8. **Print**: binder guide (a pocket map with tick boxes), placeholder cards (true 63 × 88 mm, 9 per A4, print at 100% scale) or a checklist.
+9. **Export and share**: a **share link** (a read-only page anyone can open, with your list packed into the link itself so nothing is uploaded), a CSV with page, slot, printing, quantity, spares, condition, paid and price columns, a text list, or JSON. **Full backup and restore** is how you move data between devices. A merge combines matching collections.
 
 ## Design decisions (deliberate trade-offs)
 
 - **Binder positions are always based on the whole collection**, never the filtered view. If you filter to "Needed", a card's page and slot stay where they really are in the binder.
-- **Owned ticks are kept per collection.** The same card can be in your artist binder and your Pokédex binder, and you might physically have it in only one. If you own it in another collection, a blue dot shows on the card and the info panel names that collection.
+- **Quantities are the source of truth.** A tick is shorthand for "one copy of the main printing", and unticking sets that printing to zero. Undo is offered on bulk changes.
+- **Spares count from what fills the binder.** In a normal binder, the first copy of any printing fills the pocket and the rest are spares. In master-set mode, each printing fills its own pocket. Copies carried over from older versions show as "Unspecified" and count towards the main printing.
+- **Prices paid are per copy, per printing**, not per individual card. Gain or loss only counts copies where you've entered a price paid.
+- **Owned cards are tracked per collection.** The same card can be in your artist binder and your Pokédex binder, and you might physically have it in only one. If you own it in another collection, a blue dot shows on the card and the info panel names that collection.
 - **Ticking a card doesn't take it off screen straight away**, even when you're filtered to "Needed". Otherwise cards would disappear as you tap them. The list catches up on the next filter change.
 - **Your data lives only in this browser (IndexedDB).** There's no server and no account. The app reminds you to back up once you have more than 50 ticks.
 
@@ -62,13 +70,21 @@ The Pokémon TCG API has **no artist** recorded for about 1,600 cards, including
 
 This is optional. Get one free from the Pokémon TCG developer portal and paste it into Settings. It's stored only in this browser and sent only to `api.pokemontcg.io`. Without a key the API still works, but with lower rate limits. The app backs off and retries automatically if it's rate-limited (HTTP 429).
 
-## Upgrading from v1
+## Upgrading
+
+From v2.3 or earlier, the first time v2.4 opens, each ticked card becomes one copy of "Unspecified" printing, and nothing is lost. Open a card's details to say which printing it is. Older backups restore the same way.
+
+### From v1
 
 When v2 first loads and has no data of its own, it imports the v1 collections, cached cards and owned ticks from the same browser. The v1 data isn't deleted. v1 kept one owned list across all collections, so on import each collection gets the ticks for its own cards.
 
 ## Config
 
-Everything you can change is in the `CONFIG` block at the top of the script in `index.html`: API base URL, retry count, page size, default layout and undo timeout.
+Everything you can change is in the `CONFIG` block at the top of `app.js`: API base URL, retry count, page size, default layout and undo timeout.
+
+## Appearance
+
+The app has dark and light themes and follows your device by default. You can choose either in Settings. It respects reduced-motion settings, and touch targets are at least 44 px.
 
 ## Licence and attribution
 
