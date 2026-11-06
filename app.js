@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '2.4.0',
+  version: '2.4.1',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 4,           // for 429 / 5xx, exponential back-off
@@ -1404,6 +1404,9 @@ window.addEventListener('afterprint', () => { $('#print-root').innerHTML = ''; }
 async function openSettings() {
   $('#st-psrc').value = S.settings.priceSource || CONFIG.priceSource;
   $('#st-theme').value = S.settings.theme || 'system';
+  $('#st-where').textContent = location.origin + location.pathname.replace(/index\.html$/, '');
+  $('#st-sw').textContent = navigator.serviceWorker?.controller ? 'checking…' : 'none (not installed for offline yet)';
+  navigator.serviceWorker?.controller?.postMessage('version');
   $('#st-fx-eur').value = S.settings.fx?.EUR || ''; $('#st-fx-usd').value = S.settings.fx?.USD || '';
   $('#st-fx-status').textContent = S.fx ? `Auto rate: €1 = £${S.fx.eur.toFixed(4)}, $1 = £${S.fx.usd.toFixed(4)} (ECB reference rate for ${S.fx.date}, checked ${new Date(S.fx.fetchedAt).toLocaleString('en-GB')}). An override, if set, wins.` : 'No exchange rate fetched yet.';
   $('#st-key').value = S.settings.apiKey || ''; $('#st-gaps').value = gapSets().join(', '); $('#st-tcgdex').checked = S.settings.tcgdex !== false; $('#st-ver').textContent = 'v' + CONFIG.version;
@@ -1437,6 +1440,8 @@ $('#st-prune').addEventListener('click', () => {
   for (const id of Object.keys(S.cards)) if (!inUse.has(id)) { delete S.cards[id]; n++; }
   save(); toast(`Removed ${n} unused card(s)`, 'success'); openSettings();
 });
+$('#st-update').addEventListener('click', () => checkForUpdate(true));
+$('#st-force').addEventListener('click', forceRefresh);
 $('#st-reset').addEventListener('click', async () => {
   if (!await confirmDlg('Reset everything?', 'Deletes all collections, owned ticks and cached cards on this device. This cannot be undone.', 'Delete all')) return;
   S = blankState(); await flush(); $('#dlg-settings').close(); render(); toast('All data cleared', 'info');
@@ -1713,7 +1718,42 @@ $$('dialog').forEach(d => d.addEventListener('click', e => { if (e.target === d 
 let installEvt;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; $('#install-btn').classList.remove('hidden'); });
 $('#install-btn').addEventListener('click', async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; $('#install-btn').classList.add('hidden'); });
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW registration failed', err));
+/* ---------- updates: check on every launch / return to the app, and say so when a new version lands ---------- */
+let swReg = null, hadController = !!navigator.serviceWorker?.controller, reloading = false;
+let announced = false;
+function announceUpdate() {
+  if (reloading || announced) return; announced = true;
+  toast('A new version of PokéBinder is ready', 'success', { label:'Reload', fn:() => { reloading = true; location.reload(); } });
+}
+async function checkForUpdate(manual) {
+  try {
+    if (!swReg) { if (manual) toast('Offline updates aren\u2019t available here (needs https)', 'warn'); return; }
+    await swReg.update();
+    if (swReg.waiting || swReg.installing) announceUpdate();
+    else if (manual) {
+      const r = await fetch('app.js', { cache:'no-store' }); const live = (await r.text()).match(/version:\s*'([\d.]+)'/)?.[1];
+      if (live && live !== CONFIG.version) { toast(`Version ${live} is published — reloading…`, 'info'); reloading = true; setTimeout(() => location.reload(), 600); }
+      else toast(`You're on the latest version (${CONFIG.version})`, 'success');
+    }
+  } catch (e) { if (manual) toast(`Couldn't check for updates (${e.message})`, 'warn'); }
+}
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js', { updateViaCache:'none' }).then(reg => {
+    swReg = reg;
+    reg.addEventListener('updatefound', () => { const nw = reg.installing; nw?.addEventListener('statechange', () => { if (nw.state === 'activated' && hadController) announceUpdate(); }); });
+  }).catch(err => console.warn('SW registration failed', err));
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) announceUpdate(); hadController = true; });
+  navigator.serviceWorker.addEventListener('message', e => { if (e.data?.swVersion) { const el = $('#st-sw'); if (el) el.textContent = e.data.swVersion; } });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(false); });
+}
+/* Escape hatch: throw away the offline copy of the app (NOT your collection, which is in IndexedDB) and reload. */
+async function forceRefresh() {
+  if (!await confirmDlg('Reload the app from the internet?', 'Clears the offline copy of the app files and reloads the latest version. Your collections, quantities and settings are kept.', 'Reload app')) return;
+  await flush();
+  try { for (const k of await caches.keys()) if (k.startsWith('pb-v')) await caches.delete(k); } catch {}
+  try { for (const r of await navigator.serviceWorker?.getRegistrations?.() || []) await r.unregister(); } catch {}
+  reloading = true; location.replace(location.pathname + '?r=' + Date.now());
+}
 
 /* ---------- boot ---------- */
 (async function boot() {
@@ -1733,6 +1773,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) naviga
   if (!S.collections[S.activeId]) S.activeId = S.order[0] || null;
   UI.view = S.settings.view || 'binder';
   applyTheme();
+  if (location.search.includes('r=')) history.replaceState(null, '', location.pathname + location.hash);
   if (location.hash.startsWith('#s=')) await openShare(location.hash.slice(3));
   else render();
   window.addEventListener('hashchange', () => { if (location.hash.startsWith('#s=')) openShare(location.hash.slice(3)); });

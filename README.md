@@ -1,4 +1,4 @@
-# PokéBinder Studio v2.4
+# PokéBinder Studio v2.4.1
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -69,6 +69,12 @@ The Pokémon TCG API has **no artist** recorded for about 1,600 cards, including
 ## API key
 
 This is optional. Get one free from the Pokémon TCG developer portal and paste it into Settings. It's stored only in this browser and sent only to `api.pokemontcg.io`. Without a key the API still works, but with lower rate limits. The app backs off and retries automatically if it's rate-limited (HTTP 429).
+
+## Updates
+
+The app checks for a new version every time you open it or switch back to it. When one arrives, you'll see **"A new version of PokéBinder is ready → Reload"**. Settings → About this version shows the running version, the offline copy and the address it's running from. **Check for updates** checks for a new version straight away. **Reload app from the internet** clears the offline copy of the app files (not your data) and reloads.
+
+If **Running from** isn't the address you upload to, your Home Screen icon points at an older copy. Back up, open the right address in Safari, and add it to the Home Screen again.
 
 ## Upgrading
 

@@ -684,7 +684,16 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
         <button class="btn sm danger" id="st-reset">Reset everything</button>
       </div>
     </fieldset>
-    <p class="small muted" style="margin:0">PokéBinder Studio <span id="st-ver"></span>. Card data and images © their respective owners, via the Pokémon TCG API and TCGdex. Fan-made tool, not affiliated with Nintendo, Creatures, GAME FREAK or The Pokémon Company.</p>
+    <fieldset><legend>About this version</legend>
+      <dl class="kv small">
+        <dt>App version</dt><dd><b id="st-ver"></b></dd>
+        <dt>Offline copy</dt><dd class="mono" id="st-sw">—</dd>
+        <dt>Running from</dt><dd class="mono" id="st-where" style="word-break:break-all"></dd>
+      </dl>
+      <div class="row" style="margin-top:10px"><button class="btn sm" id="st-update"><svg class="i sm"><use href="#i-refresh"/></svg>Check for updates</button><button class="btn sm" id="st-force">Reload app from the internet</button></div>
+      <p class="small muted" style="margin:8px 0 0">"Running from" should match the address where you uploaded the files. If it doesn't, your Home Screen icon points at an older copy — open the right address in Safari and add it to the Home Screen again (back up first).</p>
+    </fieldset>
+    <p class="small muted" style="margin:0">PokéBinder Studio. Card data and images © their respective owners, via the Pokémon TCG API and TCGdex. Fan-made tool, not affiliated with Nintendo, Creatures, GAME FREAK or The Pokémon Company.</p>
   </div>
   <div class="dlg-f"><button class="btn primary" data-close>Done</button></div>
 </div></dialog>
