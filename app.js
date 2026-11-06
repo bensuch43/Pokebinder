@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '2.5.0',
+  version: '2.6.0',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 4,           // for 429 / 5xx, exponential back-off
@@ -303,7 +303,10 @@ function ownedElsewhere(id, exceptId) {
 function render() {
   const col = active();
   renderHeader(col);
-  $('#toolbar').classList.toggle('hidden', !col);
+  const vendor = UI.view === 'vendor';
+  $('#toolbar').classList.toggle('tabs-only', !col || vendor);   // keep the view tabs reachable; hide collection stats/filters
+  if (col) { syncOwned(col); UI.layout = computeLayout(col); }
+  if (vendor) { renderVendor(); return; }
   if (!col) { renderWelcome(); return; }
   syncOwned(col);
   UI.layout = computeLayout(col);
@@ -475,7 +478,7 @@ function renderView() {
   }
   if (UI.view === 'list') v.innerHTML = listHtml(col);
   else if (UI.view === 'sets') v.innerHTML = overviewHtml(col);
-  else if (UI.view === 'trade') v.innerHTML = tradeHtml(col);
+  else if (UI.view === 'vendor') { renderVendor(); return; }
   else v.innerHTML = binderHtml(col);
   // image skeletons: stop the shimmer once each image has loaded (or failed)
   $$('.pocket img', v).forEach(img => { const done = () => img.closest('.pocket')?.classList.add('loaded'); if (img.complete) done(); else { img.addEventListener('load', done, { once:true }); img.addEventListener('error', done, { once:true }); } });
@@ -544,6 +547,7 @@ function overviewHtml(col) {
       <p class="muted small" style="margin:0">Recorded once a day from the latest prices you've fetched${col.history?.length ? ` · since ${esc(col.history[0].d)}` : ''}.</p></div>
       <div class="legend"><span>Owned value</span>${t.withPaid ? '<span class="paid">Paid</span>' : ''}</div></div>
       ${chartSvg(col.history || [])}</section>
+    <div class="row" style="justify-content:flex-end"><button class="btn sm" data-act="share-want"${UI.layout.cards.some(e => !col.owned[e.id]) ? '' : ' disabled'}>${ic('share', 'sm')}Share want list (${UI.layout.cards.filter(e => !col.owned[e.id]).length})</button></div>
     ${setsHtml(col)}</div>`;
 }
 function chartSvg(h) {
@@ -634,7 +638,7 @@ function switchCollection(id) {
 }
 
 /* undo: snapshot collection data (cards are never deleted by undoable actions) */
-function snapshot() { return JSON.stringify({ collections:S.collections, order:S.order, activeId:S.activeId }); }
+function snapshot() { return JSON.stringify({ collections:S.collections, order:S.order, activeId:S.activeId, stock:S.stock, ledger:S.ledger, vendor:S.vendor }); }
 function undoable(msg, snap) {
   toast(msg, 'info', { label:'Undo', fn:() => { Object.assign(S, JSON.parse(snap)); save(); render(); toast('Undone', 'success'); } });
 }
@@ -1308,7 +1312,7 @@ function sanitizeState(st) {
   Object.keys(collections).forEach(id => { if (!order.includes(id)) order.push(id); });
   const labelPrices = {};
   for (const [k, v] of Object.entries(st.labelPrices || {})) if (/^[A-Za-z0-9._-]{1,60}\|[a-z]*$/.test(k) && v > 0 && v < 1e5) labelPrices[k] = Math.round(v * 100) / 100;
-  return { cards, collections, order, labelPrices, activeId:collections[st.activeId] ? st.activeId : order[0] || null };
+  return { cards, collections, order, labelPrices, ...sanitizeVendor(st, cards), activeId:collections[st.activeId] ? st.activeId : order[0] || null };
 }
 $('#e-restore-file').addEventListener('change', async e => {
   const file = e.target.files[0]; e.target.value = ''; if (!file) return;
@@ -1316,7 +1320,7 @@ $('#e-restore-file').addEventListener('change', async e => {
   try {
     const j = JSON.parse(await file.text());
     incoming = j.app === 'PokeBinderStudio' ? sanitizeState(j.state) : null;
-    if (!incoming || !Object.keys(incoming.collections).length) throw new Error('not a PokéBinder backup');
+    if (!incoming || (!Object.keys(incoming.collections).length && !Object.keys(incoming.stock).length && !incoming.ledger.length)) throw new Error('not a PokéBinder backup');
   } catch (err) { toast('Restore failed: ' + err.message, 'error'); return; }
   const mode = $('#e-restore-mode').value, nCols = Object.keys(incoming.collections).length;
   if (mode === 'replace') {
@@ -1339,7 +1343,9 @@ $('#e-restore-file').addEventListener('change', async e => {
     }
     S.activeId ||= S.order[0];
     S.labelPrices = { ...incoming.labelPrices, ...S.labelPrices };
+    mergeVendor(incoming);
   }
+  initVendorState();
   await flush(); $('#dlg-export').close(); render(); toast(`Restored ${nCols} collection${nCols === 1 ? '' : 's'}`, 'success');
 });
 
@@ -1452,7 +1458,7 @@ $('#st-persist').addEventListener('click', async () => {
   toast(ok ? 'Browser will keep your data' : 'Browser declined — install the app or back up regularly', ok ? 'success' : 'warn'); openSettings();
 });
 $('#st-prune').addEventListener('click', () => {
-  const inUse = new Set(S.order.flatMap(id => S.collections[id].cardIds)); let n = 0;
+  const inUse = new Set([...S.order.flatMap(id => S.collections[id].cardIds), ...vendorCardIds()]); let n = 0;
   for (const id of Object.keys(S.cards)) if (!inUse.has(id)) { delete S.cards[id]; n++; }
   save(); toast(`Removed ${n} unused card(s)`, 'success'); openSettings();
 });
@@ -1486,21 +1492,21 @@ async function buildShareUrl(rows, withPrices = true, kind) {
   kind ||= SHARE_KIND[f.status] || 'list';
   const cols = [...new Set(rows.map(r => r.col.name))];
   const payload = { v:1, k:kind, n:cols.length === 1 ? cols[0] : 'Several collections', d:today(),
-    a:rows.slice(0, 1500).map(({ c, sp }) => { const pi = withPrices ? priceOf(c) : null;
-      return [c.cardId || c.id, c.name, c.number, c.set_id, c.set_name, c.variant || '', kind === 'trade' ? sp || 1 : 1, pi?.gbp != null ? Math.round(pi.gbp * 100) / 100 : null, c.rarity || '']; }) };
+    a:rows.slice(0, 1500).map(({ c, sp, price }) => { const g = !withPrices ? null : price != null ? price : priceOf(c)?.gbp;
+      return [c.cardId || c.id, c.name, c.number, c.set_id, c.set_name, c.variant || '', kind === 'trade' || kind === 'sale' ? sp || 1 : 1, g != null ? Math.round(g * 100) / 100 : null, c.rarity || '']; }) };
   const json = new TextEncoder().encode(JSON.stringify(payload));
   let token;
   if ('CompressionStream' in window) token = '1.' + b64u(await pipeBytes(json, new CompressionStream('deflate-raw')));
   else token = '0.' + b64u(json);
   return `${location.origin}${location.pathname}#s=${token}`;
 }
-async function shareRows(rows) {
+async function shareRows(rows, forceKind) {
   if (!rows.length) { toast('Nothing to share with these filters', 'warn'); return; }
   const withPrices = $('#dlg-export').open ? $('#e-prices').checked : true;
   const f = $('#dlg-export').open ? exportFilters() : null;
-  const kind = f ? (SHARE_KIND[f.status] || 'list') : (rows.every(r => !r.own) ? 'want' : 'trade');
+  const kind = forceKind || (f ? (SHARE_KIND[f.status] || 'list') : (rows.every(r => !r.own) ? 'want' : 'trade'));
   const url = await buildShareUrl(rows, withPrices, kind);
-  const title = `${rows[0].col.name} — ${kind === 'want' ? 'want list' : kind === 'trade' ? 'trade list' : 'card list'} (${rows.length})`;
+  const title = `${rows[0].col.name} — ${kind === 'want' ? 'want list' : kind === 'trade' ? 'trade list' : kind === 'sale' ? 'cards for sale' : 'card list'} (${rows.length})`;
   if (url.length > 60000) toast('That list makes a very long link — some apps may cut it off. Filter it down if it fails.', 'warn');
   try {
     if (navigator.share) { await navigator.share({ title, url }); return; }
@@ -1523,7 +1529,7 @@ async function decodeShare(token) {
     items.push({ id:r[0], name:str(r[1], 120) || '?', number:str(r[2], 20), set_id:str(r[3], 40), set_name:str(r[4], 100), variant:VARIANTS[r[5]] ? r[5] : '',
       n:Math.max(1, Math.min(999, Math.floor(numOr(r[6], 1)))), gbp:numOr(r[7]) != null && r[7] >= 0 && r[7] < 1e6 ? r[7] : null, rarity:str(r[8], 60) });
   }
-  return { kind:['want','trade','list'].includes(j.k) ? j.k : 'list', name:str(j.n, 80) || 'A collection', date:/^\d{4}-\d{2}-\d{2}$/.test(j.d) ? j.d : '', items };
+  return { kind:['want','trade','list','sale'].includes(j.k) ? j.k : 'list', name:str(j.n, 80) || 'A collection', date:/^\d{4}-\d{2}-\d{2}$/.test(j.d) ? j.d : '', items };
 }
 /* Image URLs are derived from the card ID pattern, never taken from the link. */
 const imgForId = id => { const m = /^([a-z0-9.]+)-([A-Za-z0-9]+)$/.exec(id); return m && !id.startsWith('custom-') ? `https://images.pokemontcg.io/${m[1]}/${m[2]}.png` : ''; };
@@ -1540,7 +1546,7 @@ async function openShare(token) {
       if (!ids.has(id) || !c) continue;
       const q = totalQty(col, id); have += q; spare += spareCount(col, c); if (!q) need = true; }
     return { have, spare, need }; };
-  const title = data.kind === 'want' ? 'Want list' : data.kind === 'trade' ? 'Trade list' : 'Card list';
+  const title = data.kind === 'want' ? 'Want list' : data.kind === 'trade' ? 'Trade list' : data.kind === 'sale' ? 'Cards for sale' : 'Card list';
   const total = data.items.reduce((n, i) => n + (i.gbp || 0) * i.n, 0), priced = data.items.some(i => i.gbp != null);
   const groups = new Map(); data.items.forEach(i => { if (!groups.has(i.set_id)) groups.set(i.set_id, []); groups.get(i.set_id).push(i); });
   const label = i => i.name + (i.variant && i.variant !== 'normal' ? ` (${VARIANTS[i.variant]})` : '');
@@ -1553,7 +1559,7 @@ async function openShare(token) {
       ${S.order.length ? `<p class="small muted" style="margin:6px 0 0">Highlights compare this list with the collections saved in your browser.</p>` : ''}
     </div>
     ${[...groups.values()].map(g => `<section class="share-set"><h3>${esc(g[0].set_name)}</h3>${g.map(i => { const m = mine(i.id), img = imgForId(i.id);
-      const note = data.kind === 'want' ? (m.spare ? `You have ${m.spare} spare` : m.have ? 'You own this' : '') : (m.need ? 'You need this' : '');
+      const note = data.kind === 'want' ? (m.spare ? `You have ${m.spare} spare` : m.have ? 'You own this' : '') : (m.need || (data.kind === 'sale' && !m.have && S.order.length) ? (m.need ? 'You need this' : '') : '');
       return `<div class="share-row">${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : '<span class="ph"></span>'}
         <div><b>${esc(label(i))}</b><div class="small muted">${esc(i.number)} · ${esc(i.set_name)}${i.rarity ? ' · ' + esc(i.rarity) : ''}</div>${note ? `<div class="mine">${ic('check', 'sm')} ${note}</div>` : ''}</div>
         <div style="text-align:right">${i.n > 1 ? `<div class="small">×${i.n}</div>` : ''}${i.gbp != null ? `<div class="price">${GBP.format(i.gbp)}</div>` : ''}</div></div>`; }).join('')}</section>`).join('')}
@@ -1569,116 +1575,19 @@ function closeShare() {
 }
 
 /* ==========================================================================
-   TRADES — spares list + a two-sided trade calculator at current GBP prices
-   ========================================================================== */
-UI.tradeResults = [];
-function tradeItemValue(it) { const c = S.cards[it.id]; const g = c ? priceOf(c, it.v)?.gbp : null; return g != null ? g * it.q : null; }
-function tradeSide(side) {
-  const items = S.trade[side];
-  const total = items.reduce((n, it) => n + (tradeItemValue(it) || 0), 0), unpriced = items.filter(it => tradeItemValue(it) == null).length;
-  return { total, unpriced, html: items.length ? items.map((it, i) => { const c = S.cards[it.id]; if (!c) return ''; const img = safeUrl(c.img_s), v = tradeItemValue(it);
-    const vs = variantsOf(c, active() || {});
-    return `<div class="titem">${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : '<span class="ph"></span>'}
-      <div class="t"><b>${esc(c.name)}</b><span>${esc(c.number)} · ${esc(c.set_name)}</span>
-        <select class="inp t-v" data-side="${side}" data-i="${i}" style="min-height:32px;font-size:13px;margin-top:4px;padding:0 30px 0 8px" aria-label="Printing">${vs.map(x => `<option value="${x}"${x === it.v ? ' selected' : ''}>${VARIANTS[x]}</option>`).join('')}</select></div>
-      <div class="stepper"><button type="button" data-act="trade-q" data-side="${side}" data-i="${i}" data-d="-1" aria-label="One fewer">${ic('minus', 'sm')}</button><output>${it.q}</output><button type="button" data-act="trade-q" data-side="${side}" data-i="${i}" data-d="1" aria-label="One more">${ic('plus', 'sm')}</button></div>
-      <div style="display:grid;justify-items:end;gap:2px"><span class="price">${v != null ? GBP.format(v) : '—'}</span><button class="btn sm ghost icon" data-act="trade-rm" data-side="${side}" data-i="${i}" aria-label="Remove">${ic('x', 'sm')}</button></div></div>`; }).join('')
-    : `<p class="small muted" style="margin:6px 0">${side === 'give' ? 'Tap <b>Give</b> on a spare, or search below.' : 'Search for the cards you’re getting.'}</p>` };
-}
-function tradeHtml(col) {
-  const spares = [];
-  for (const id of col.cardIds) { const c = S.cards[id]; if (!c) continue; const by = {};
-    for (const s of sparesOf(col, c)) { const v = s.v === 'any' ? primaryVariant(c, col) : s.v; by[v] = (by[v] || 0) + s.n; }
-    for (const [v, n] of Object.entries(by)) spares.push({ c, v, n }); }
-  spares.sort((a, b) => (priceOf(b.c, b.v)?.gbp || 0) - (priceOf(a.c, a.v)?.gbp || 0));
-  const spareVal = spares.reduce((n, s) => n + (priceOf(s.c, s.v)?.gbp || 0) * s.n, 0);
-  const need = UI.layout.cards.filter(e => !col.owned[e.id]).length;
-  const G = tradeSide('give'), R = tradeSide('get'), diff = R.total - G.total;
-  return `<div class="ov">
-    <section class="panel">
-      <div class="row" style="justify-content:space-between;align-items:flex-start"><div><h2>Your spares</h2>
-        <p class="muted small" style="margin:0">${spares.length ? `${spares.reduce((n, s) => n + s.n, 0)} spare copies worth about <b class="price">${GBP.format(spareVal)}</b>. Log extra copies in each card's details.` : 'No spares yet. Set quantities above 1 in a card’s details (tap the ⓘ on a pocket) and they appear here.'}</p></div>
-        <div class="row"><button class="btn sm" data-act="labels">${ic('sticker', 'sm')}Price stickers</button><button class="btn sm" data-act="share-trade"${spares.length ? '' : ' disabled'}>${ic('share', 'sm')}Share trade list</button><button class="btn sm" data-act="share-want"${need ? '' : ' disabled'}>${ic('share', 'sm')}Share want list (${need})</button></div></div>
-      ${spares.length ? `<div class="tlist">${spares.slice(0, 200).map(s => { const img = safeUrl(s.c.img_s), pi = priceOf(s.c, s.v);
-        return `<div class="titem">${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : '<span class="ph"></span>'}
-          <div class="t"><b>${esc(s.c.name)}</b><span>${esc(s.c.number)} · ${esc(s.c.set_name)} · ${VARIANTS[s.v]}</span></div>
-          <span class="small num">×${s.n}${pi ? ` · ${fmtPrice(pi)}` : ''}</span>
-          <button class="btn sm" data-act="give" data-card="${esc(s.c.id)}" data-v="${s.v}">${ic('plus', 'sm')}Give</button></div>`; }).join('')}</div>` : ''}
-    </section>
-    <section class="panel"><h2>Trade calculator</h2><p class="muted">Compares both sides at current ${(S.settings.priceSource || CONFIG.priceSource) === 'tcgplayer' ? 'TCGplayer' : 'Cardmarket'} prices in GBP.</p>
-      <div class="trade">
-        <div><b>You give</b><div class="tlist">${G.html}</div><div class="ttotal"><span>Total</span><span class="price">${GBP.format(G.total)}${G.unpriced ? ` <small class="muted">+${G.unpriced} unpriced</small>` : ''}</span></div></div>
-        <div><b>You get</b><div class="tlist">${R.html}</div>
-          <form id="t-form" class="row" style="margin-top:8px;flex-wrap:nowrap"><div class="search" style="flex:1"><svg class="i"><use href="#i-search"/></svg><input id="t-term" class="inp" placeholder="Card name or code, e.g. PBL 42" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Find a card"></div><button class="btn">Find</button></form>
-          <div class="picker" id="t-results">${UI.tradeResults.map(c => `<button class="titem" style="text-align:left" data-act="trade-pick" data-card="${esc(c.id)}">${safeUrl(c.img_s) ? `<img src="${esc(safeUrl(c.img_s))}" alt="" loading="lazy">` : '<span class="ph"></span>'}<span class="t"><b>${esc(c.name)}</b><span>${esc(c.number)} · ${esc(c.set_name)}</span></span><span class="price small">${fmtPrice(priceOf(c))}</span>${ic('plus')}</button>`).join('')}</div>
-          <div class="ttotal"><span>Total</span><span class="price">${GBP.format(R.total)}${R.unpriced ? ` <small class="muted">+${R.unpriced} unpriced</small>` : ''}</span></div></div>
-      </div>
-      ${S.trade.give.length || S.trade.get.length ? `<div class="verdict ${Math.abs(diff) < 0.5 ? '' : diff > 0 ? 'up' : 'down'}" style="margin-top:14px">${Math.abs(diff) < 0.5 ? 'About even' : diff > 0 ? `You come out ${GBP.format(diff)} ahead` : `You give ${GBP.format(-diff)} more than you get`}</div>
-      <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn ghost" data-act="trade-clear">Clear</button><button class="btn primary" data-act="trade-apply">${ic('check', 'sm')}Apply to “${esc(col.name)}”</button></div>` : ''}
-    </section></div>`;
-}
-function tradeAdd(side, cardId, v) {
-  const c = S.cards[cardId]; if (!c) return;
-  v = VARIANTS[v] && v !== 'any' ? v : primaryVariant(c, active() || {});
-  const hit = S.trade[side].find(x => x.id === cardId && x.v === v);
-  if (hit) hit.q = Math.min(99, hit.q + 1); else S.trade[side].push({ id:cardId, v, q:1 });
-  if (side === 'get') UI.tradeResults = [];
-  save(); renderView();
-}
-async function applyTrade() {
-  const col = active(); if (!col) return;
-  if (!await confirmDlg('Apply this trade?', `Removes the cards you give from "${col.name}" and adds the cards you get (as owned copies). You can undo straight after.`, 'Apply trade')) return;
-  const snap = snapshot(); col.copies ||= {};
-  for (const it of S.trade.give) {
-    const rec = col.copies[it.id]; if (!rec) continue; let left = it.q;
-    for (const v of [it.v, 'any', ...Object.keys(rec)]) { if (!left) break; const r = rec[v]; if (!r?.q) continue; const take = Math.min(r.q, left); r.q -= take; left -= take; }
-  }
-  for (const it of S.trade.get) {
-    if (!S.cards[it.id]) continue;
-    if (!col.cardIds.includes(it.id)) col.cardIds.push(it.id);
-    const r = ((col.copies[it.id] ||= {})[it.v] ||= { q:0 }); r.q = Math.min(999, (r.q || 0) + it.q);
-  }
-  S.trade = { give:[], get:[] }; syncOwned(col); col.updated = Date.now(); save(); render();
-  undoable('Trade applied', snap);
-}
-document.addEventListener('submit', async e => {
-  if (e.target.id !== 't-form') return;
-  e.preventDefault();
-  const term = $('#t-term').value.trim(); if (!term) return;
-  const btn = e.target.querySelector('button'); btn.disabled = true;
-  try {
-    let res;
-    if (/^([A-Za-z]{2,5}|PR-[A-Za-z]{2,4})[\s-]*[A-Za-z]{0,4}\d{1,4}/.test(term) && /\d/.test(term)) res = (await codeSearch(term)).results;
-    else res = await apiFetchAll(buildQuery('name', term), null, null, 40);
-    res.forEach(mergeCard); save();
-    UI.tradeResults = res.map(c => S.cards[c.id]).slice(0, 40);
-    if (!res.length) toast('No cards found', 'warn');
-  } catch (err) {
-    const t = term.toLowerCase(); UI.tradeResults = Object.values(S.cards).filter(c => c.name.toLowerCase().includes(t)).slice(0, 40);
-    toast(`Search offline — showing ${UI.tradeResults.length} saved card(s)`, 'warn');
-  } finally { btn.disabled = false; }
-  renderView(); $('#t-term')?.focus();
-});
-document.addEventListener('change', e => {
-  if (!e.target.matches('.t-v')) return;
-  const it = S.trade[e.target.dataset.side]?.[+e.target.dataset.i]; if (!it || !VARIANTS[e.target.value]) return;
-  it.v = e.target.value; save(); renderView();
-});
-
-
-/* ==========================================================================
    PRICE STICKERS — A4 label sheets (AirPrint) or images for Bluetooth label printers.
    iPhones can't talk to Bluetooth printers from a web app, so thermal output is images
    you share into the printer's own app.
    ========================================================================== */
-const LBL_DEFAULTS = { src:'spare', copies:'copy', pct:100, round:0, min:0, stall:'', logo:'', fmt:'sheet', tpl:'L7160', start:1, dx:0, dy:0, size:'50x30', w:50, h:30 };
+const LBL_DEFAULTS = { src:'stock', copies:'copy', pct:100, round:0, min:0, stall:'', logo:'', fmt:'sheet', tpl:'L7160', start:1, dx:0, dy:0, size:'50x30', w:50, h:30 };
 const L = () => { if (!S.settings.labels?.fmt) S.settings.labels = { ...LBL_DEFAULTS, ...S.settings.labels }; return S.settings.labels; };   // one stable object
 UI.labels = { items:[], logoImg:null };
-const lblKey = it => `${it.id}|${it.v || ''}`;
+const lblKey = it => it.lotId ? `lot:${it.lotId}` : `${it.id}|${it.v || ''}`;
 function labelSource(src) {
-  const col = active(); if (!col) return [];
+  const col = active(); if (!col && src !== 'stock' && src !== 'give') return [];
   const out = [];
-  if (src === 'give') S.trade.give.forEach(t => out.push({ id:t.id, v:t.v, n:t.q }));
+  if (src === 'stock') Object.values(S.stock).forEach(l => out.push({ id:l.cardId, v:l.v, n:l.q, lotId:l.id }));
+  else if (src === 'give') S.vendor.give.forEach(t => out.push({ id:t.id, v:t.v, n:t.q }));
   else if (src === 'filter') UI.layout.cards.filter(e => matches(e, col)).forEach(e => out.push({ id:e.cardId, v:e.variant || primaryVariant(S.cards[e.cardId] || e, col), n:1 }));
   else for (const id of col.cardIds) { const c = S.cards[id]; if (!c) continue; const by = {};
     for (const sp of sparesOf(col, c)) { const v = sp.v === 'any' ? primaryVariant(c, col) : sp.v; by[v] = (by[v] || 0) + sp.n; }
@@ -1695,10 +1604,11 @@ function rulePrice(it) {
   if (+o.min > 0) x = Math.max(x, +o.min);
   return Math.round(x * 100) / 100;
 }
-const labelPrice = it => { const ov = S.labelPrices?.[lblKey(it)]; return ov > 0 ? ov : rulePrice(it); };
+const labelPrice = it => { if (it.lotId && S.stock[it.lotId]) return lotAsk(S.stock[it.lotId]); const ov = S.labelPrices?.[lblKey(it)]; return ov > 0 ? ov : rulePrice(it); };
+const itemOverride = it => it.lotId ? S.stock[it.lotId]?.price : S.labelPrices?.[lblKey(it)];
 function openLabels(src) {
   const o = L(); if (src) o.src = src;
-  if (!active()) { toast('Create a collection first', 'warn'); return; }
+  if (!active() && o.src !== 'stock') o.src = 'stock';
   $('#lb-src').value = o.src; $('#lb-copies').value = o.copies; $('#lb-pct').value = o.pct == 100 ? '' : o.pct; $('#lb-round').value = String(o.round);
   $('#lb-min').value = o.min || ''; $('#lb-stall').value = o.stall; $('#lb-start').value = o.start > 1 ? o.start : ''; $('#lb-dx').value = o.dx || ''; $('#lb-dy').value = o.dy || '';
   $('#lb-tpl').innerHTML = Object.entries(CONFIG.labelSheets).map(([k, t]) => `<option value="${k}"${k === o.tpl ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
@@ -1715,11 +1625,12 @@ function buildLabelItems() {
 function renderLabelRows() {
   const items = UI.labels.items;
   $('#lb-rows').innerHTML = items.length ? items.map((it, i) => { const c = S.cards[it.id], rp = rulePrice(it), ov = S.labelPrices?.[lblKey(it)], m = priceOf(c, it.v)?.gbp;
+    const ovv = itemOverride(it);
     return `<label class="lb-row"><input type="checkbox" data-i="${i}"${it.on ? ' checked' : ''} aria-label="Include ${esc(c.name)}">
       <span class="t"><b>${esc(c.name)}${it.n > 1 ? ` <span class="muted">×${it.n}</span>` : ''}</b><span>${VARIANTS[it.v] && it.v !== 'normal' ? esc(VARIANTS[it.v]) + ' · ' : ''}${esc(c.set_name)} ${esc(c.number)}</span></span>
       <span class="small muted num" title="Market price">${m != null ? GBP.format(m) : 'no price'}</span>
-      <input class="inp mono" data-p="${i}" inputmode="decimal" aria-label="Sticker price for ${esc(c.name)}" placeholder="${rp != null ? rp.toFixed(2) : 'set £'}" value="${ov > 0 ? ov.toFixed(2) : ''}"></label>`; }).join('')
-    : `<p class="small muted" style="margin:8px">${L().src === 'spare' ? 'No spares yet. Set quantities above 1 in a card’s details (the ⓘ on a pocket), or choose another source above.' : L().src === 'give' ? 'The trade calculator’s "You give" list is empty.' : 'No cards match the current filters.'}</p>`;
+      <input class="inp mono" data-p="${i}" inputmode="decimal" aria-label="Sticker price for ${esc(c.name)}" placeholder="${rp != null ? rp.toFixed(2) : 'set £'}" value="${ovv > 0 ? ovv.toFixed(2) : ''}"></label>`; }).join('')
+    : `<p class="small muted" style="margin:8px">${L().src === 'stock' ? 'Your stock is empty. Add cards in Vendor → Stock, or move spares in from a collection.' : L().src === 'spare' ? 'No spares yet. Set quantities above 1 in a card’s details (the ⓘ on a pocket), or choose another source above.' : L().src === 'give' ? 'The trade calculator’s "You give" list is empty.' : 'No cards match the current filters.'}</p>`;
   updateLabelCount();
 }
 function selectedStickers() {
@@ -1863,7 +1774,9 @@ $('#lb-rows').addEventListener('change', e => {
   const i = e.target.dataset.i, p = e.target.dataset.p;
   if (i != null) { UI.labels.items[+i].on = e.target.checked; updateLabelCount(); }
   if (p != null) { const it = UI.labels.items[+p], v = parseFloat(e.target.value.replace(/[£,\s]/g, '')); S.labelPrices ||= {};
-    if (v > 0 && v < 1e5) S.labelPrices[lblKey(it)] = Math.round(v * 100) / 100; else delete S.labelPrices[lblKey(it)];
+    const val = v > 0 && v < 1e5 ? Math.round(v * 100) / 100 : null;
+    if (it.lotId && S.stock[it.lotId]) S.stock[it.lotId].price = val;   // stock: the sticker price IS the asking price
+    else if (val) S.labelPrices[lblKey(it)] = val; else delete S.labelPrices[lblKey(it)];
     save(); renderLabelRows(); }
 });
 $('#lb-all').addEventListener('click', () => { UI.labels.items.forEach(it => it.on = true); renderLabelRows(); });
@@ -1903,9 +1816,10 @@ function toast(msg, type = 'info', action) {
    GLOBAL EVENT WIRING (delegated — no inline handlers, no IDs in JS strings)
    ========================================================================== */
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-act],[data-view],[data-close]'); if (!t) return;
+  const t = e.target.closest('[data-act],[data-view],[data-close],[data-vact]'); if (!t) return;
   if (t.hasAttribute('data-close')) { t.closest('dialog').close(); return; }
-  if (t.dataset.view) { UI.view = S.settings.view = t.dataset.view; save(); renderHeader(active()); renderView(); return; }
+  if (t.dataset.view) { UI.view = S.settings.view = t.dataset.view; save(); render(); window.scrollTo({ top:0 }); return; }
+  if (t.dataset.vact) { vendorAction(t, e); return; }
   const id = t.closest('[data-id]')?.dataset.id;
   switch (t.dataset.act) {
     case 'toggle': toggleOwned(id); break;
@@ -1926,13 +1840,7 @@ document.addEventListener('click', e => {
       catch (err) { toast('Refresh failed: ' + err.message, 'error'); } })(); break;
     case 'share-want': shareRows(rowsFor(active(), 'needed')); break;
     case 'labels': openLabels(); break;
-    case 'share-trade': shareRows(rowsFor(active(), 'spare')); break;
-    case 'give': tradeAdd('give', t.dataset.card, t.dataset.v); break;
-    case 'trade-rm': { const side = t.dataset.side; S.trade[side].splice(+t.dataset.i, 1); save(); renderView(); break; }
-    case 'trade-q': { const r = S.trade[t.dataset.side][+t.dataset.i]; r.q = Math.max(1, Math.min(99, r.q + Number(t.dataset.d))); save(); renderView(); break; }
-    case 'trade-clear': S.trade = { give:[], get:[] }; save(); renderView(); break;
-    case 'trade-apply': applyTrade(); break;
-    case 'trade-pick': tradeAdd('get', t.dataset.card, t.dataset.v); break;
+    case 'share-trade': shareStock(); break;
     case 'close-share': closeShare(); break;
     case 'copy-share': navigator.clipboard?.writeText(UI.shareText || '').then(() => toast('Copied to clipboard', 'success'), () => toast('Clipboard not available', 'error')); break;
     case 'bulk-own': case 'bulk-need': {
@@ -1954,12 +1862,14 @@ $('#f-text').addEventListener('input', e => { clearTimeout(textT); textT = setTi
 // light-dismiss dialogs on backdrop click
 $$('dialog').forEach(d => d.addEventListener('click', e => { if (e.target === d && d.id !== 'dlg-confirm') d.close(); }));
 
+document.addEventListener('error', e => { if (e.target?.tagName === 'IMG') e.target.style.visibility = 'hidden'; }, true);
 /* ---------- PWA ---------- */
 let installEvt;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; $('#install-btn').classList.remove('hidden'); });
 $('#install-btn').addEventListener('click', async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; $('#install-btn').classList.add('hidden'); });
 /* ---------- updates: check on every launch / return to the app, and say so when a new version lands ---------- */
-let swReg = null, hadController = !!navigator.serviceWorker?.controller, reloading = false;
+let swReg = null, reloading = false;
+const startedControlled = !!navigator.serviceWorker?.controller;   // first-ever install is not an "update"
 let announced = false;
 function announceUpdate() {
   if (reloading || announced) return; announced = true;
@@ -1980,9 +1890,9 @@ async function checkForUpdate(manual) {
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js', { updateViaCache:'none' }).then(reg => {
     swReg = reg;
-    reg.addEventListener('updatefound', () => { const nw = reg.installing; nw?.addEventListener('statechange', () => { if (nw.state === 'activated' && hadController) announceUpdate(); }); });
+    reg.addEventListener('updatefound', () => { const nw = reg.installing; nw?.addEventListener('statechange', () => { if (nw.state === 'activated' && startedControlled) announceUpdate(); }); });
   }).catch(err => console.warn('SW registration failed', err));
-  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) announceUpdate(); hadController = true; });
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (startedControlled) announceUpdate(); });
   navigator.serviceWorker.addEventListener('message', e => { if (e.data?.swVersion) { const el = $('#st-sw'); if (el) el.textContent = e.data.swVersion; } });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(false); });
 }
@@ -1995,8 +1905,8 @@ async function forceRefresh() {
   reloading = true; location.replace(location.pathname + '?r=' + Date.now());
 }
 
-/* ---------- boot ---------- */
-(async function boot() {
+/* ---------- boot (after every script file has loaded) ---------- */
+async function boot() {
   await Store.open();
   S = await Store.get(CONFIG.storageKey);
   if (!S) {
@@ -2009,9 +1919,9 @@ async function forceRefresh() {
   for (const id of S.order) { const col = S.collections[id];
     if (!col.copies) { col.copies = {}; for (const cid of Object.keys(col.owned || {})) if (!cid.includes('|')) col.copies[cid] = { any:{ q:1 } }; }
     col.history ||= []; syncOwned(col); }
-  S.trade ||= { give:[], get:[] };
+  initVendorState(); delete S.trade;   // v2.6: the old trade lists move into the vendor area
   if (!S.collections[S.activeId]) S.activeId = S.order[0] || null;
-  UI.view = S.settings.view || 'binder';
+  UI.view = S.settings.view === 'trade' ? 'vendor' : (S.settings.view || 'binder');
   applyTheme();
   if (location.search.includes('r=')) history.replaceState(null, '', location.pathname + location.hash);
   if (location.hash.startsWith('#s=')) await openShare(location.hash.slice(3));
@@ -2022,4 +1932,5 @@ async function forceRefresh() {
   const ticks = S.order.reduce((n, id) => n + Object.keys(S.collections[id].owned).length, 0);
   if (ticks > 50 && (!S.settings.lastBackup || Date.now() - S.settings.lastBackup > 30 * 864e5))
     setTimeout(() => toast('Your collection only lives in this browser — download a backup', 'warn', { label:'Back up', fn:openExport }), 1500);
-})();
+}
+document.addEventListener('DOMContentLoaded', boot);

@@ -110,6 +110,7 @@ label.f{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin:
 /* ---- layout ---- */
 .wrap{max-width:1320px;margin:0 auto;padding:16px}
 .toolbar{display:grid;gap:14px}
+.toolbar.tabs-only > :not(:first-child), .toolbar.tabs-only #layout-note{display:none}
 .tabs{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:4px;gap:2px}
 .tabs button{border:0;background:transparent;min-height:36px;padding:0 14px;border-radius:9px;font-size:14px;font-weight:600;color:var(--text-2);display:inline-flex;gap:8px;align-items:center;transition:background var(--t),color var(--t)}
 .tabs button[aria-selected=true]{background:var(--surface-2);color:var(--text);box-shadow:inset 0 0 0 1px var(--line-2)}
@@ -210,6 +211,12 @@ label.f{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin:
 .verdict{border-radius:var(--r);padding:12px 14px;font-weight:650;background:var(--surface-2);text-align:center}
 .verdict.up{background:var(--ok-soft)} .verdict.down{background:color-mix(in srgb,var(--danger) 12%,transparent)}
 .picker{display:grid;gap:6px;max-height:280px;overflow:auto;margin-top:8px}
+/* basket / offer / trade lines: text on top, quantity underneath, price on the right */
+.titem.line{grid-template-columns:40px minmax(0,1fr) auto;row-gap:6px}
+.titem.line > :first-child{grid-row:1 / span 2;align-self:start}
+.titem.line > .t{grid-column:2;grid-row:1}
+.titem.line > .stepper{grid-column:2;grid-row:2;justify-self:start}
+.titem.line > :last-child{grid-column:3;grid-row:1 / span 2;align-self:center}
 
 /* ---- inventory editor (card details) ---- */
 .inv{display:grid;gap:8px;margin-top:14px}
@@ -329,6 +336,7 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
   .actions .lbl{display:none}
   .actions .btn{width:44px;padding:0}
   .trade{grid-template-columns:1fr}
+  .trade.sale-first > section:last-child{order:-1}   /* on phones, show the running sale above the stock search */
   .appbar{position:static}
   #dlg-add .dlg-f > .row{flex-basis:100%}
   #dlg-add .dlg-f > .btn{flex:1}
@@ -476,7 +484,7 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
         <button role="tab" data-view="binder"><svg class="i sm"><use href="#i-binder"/></svg>Binder</button>
         <button role="tab" data-view="list"><svg class="i sm"><use href="#i-list"/></svg>Checklist</button>
         <button role="tab" data-view="sets"><svg class="i sm"><use href="#i-chart"/></svg>Overview</button>
-        <button role="tab" data-view="trade"><svg class="i sm"><use href="#i-swap"/></svg>Trades</button>
+        <button role="tab" data-view="vendor"><svg class="i sm"><use href="#i-tag"/></svg>Vendor</button>
       </div>
       <div class="small muted" id="layout-note"></div>
     </div>
@@ -507,7 +515,7 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
   <button role="tab" data-view="binder"><svg class="i"><use href="#i-binder"/></svg>Binder</button>
   <button role="tab" data-view="list"><svg class="i"><use href="#i-list"/></svg>Checklist</button>
   <button role="tab" data-view="sets"><svg class="i"><use href="#i-chart"/></svg>Overview</button>
-  <button role="tab" data-view="trade"><svg class="i"><use href="#i-swap"/></svg>Trades</button>
+  <button role="tab" data-view="vendor"><svg class="i"><use href="#i-tag"/></svg>Vendor</button>
 </nav>
 
 <div id="print-root"></div>
@@ -725,22 +733,22 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
     <fieldset><legend>Which cards</legend>
       <div class="grid2">
         <div><label class="f" for="lb-src">Cards</label>
-          <select id="lb-src" class="inp"><option value="spare">My spares (trade list)</option><option value="give">"You give" in the trade calculator</option><option value="filter">Cards in the current view &amp; filters</option></select></div>
+          <select id="lb-src" class="inp"><option value="stock">My stock for sale</option><option value="spare">Spares in the current collection</option><option value="give">"You give" in the trade screen</option><option value="filter">Cards in the current view &amp; filters</option></select></div>
         <div><label class="f" for="lb-copies">Stickers per card</label>
-          <select id="lb-copies" class="inp"><option value="copy">One per spare copy</option><option value="one">One per card</option></select></div>
+          <select id="lb-copies" class="inp"><option value="copy">One per copy</option><option value="one">One per card</option></select></div>
       </div>
       <div class="row" style="justify-content:space-between;margin-top:8px"><span class="small muted" id="lb-count"></span><span class="row"><button type="button" class="btn sm" id="lb-all">All</button><button type="button" class="btn sm" id="lb-none">None</button></span></div>
       <div class="lb-rows" id="lb-rows" style="margin-top:8px"></div>
     </fieldset>
     <fieldset><legend>Pricing</legend>
       <div class="grid2">
-        <div><label class="f" for="lb-pct">% of market price</label><input id="lb-pct" class="inp mono" inputmode="decimal" placeholder="100"></div>
+        <div><label class="f" for="lb-pct">Selling price: % of market</label><input id="lb-pct" class="inp mono" inputmode="decimal" placeholder="100"></div>
         <div><label class="f" for="lb-round">Rounding</label>
           <select id="lb-round" class="inp"><option value="0">None (exact)</option><option value="0.1">Nearest 10p</option><option value="0.5">Nearest 50p</option><option value="1">Nearest £1</option><option value="99">Up to .99 (e.g. £2.99)</option></select></div>
         <div><label class="f" for="lb-min">Minimum price (£)</label><input id="lb-min" class="inp mono" inputmode="decimal" placeholder="none"></div>
         <div style="align-self:end"><button type="button" class="btn sm" id="lb-reset">Clear my price overrides</button></div>
       </div>
-      <p class="small muted" style="margin:8px 0 0">Starts at the market price you see in the app (GBP). Type in a row's price box to set your own for that card; it's remembered for next time.</p>
+      <p class="small muted" style="margin:8px 0 0">This selling rule also sets the default asking price for your stock. Prices start at the market price in GBP. Type in a row's price box to set your own; for stock it becomes that card's asking price.</p>
     </fieldset>
     <fieldset><legend>Your stall</legend>
       <div class="grid2">
@@ -772,6 +780,22 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
   <div class="dlg-f"><button class="btn" data-close>Close</button><button class="btn hidden" id="lb-dl"><svg class="i sm"><use href="#i-download"/></svg>Download</button><button class="btn primary" id="lb-go"><svg class="i sm"><use href="#i-printer"/></svg>Print</button></div>
 </div></dialog>
 
+<dialog id="dlg-lot"><div class="dlg">
+  <div class="dlg-h"><h3 id="lot-title">Stock</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <div class="dlg-b">
+    <div class="titem" style="grid-template-columns:40px 1fr"><span id="lot-img"></span><div class="t"><b id="lot-sub"></b><span id="lot-market"></span></div></div>
+    <div class="grid2">
+      <div><label class="f" for="lot-v">Printing</label><select id="lot-v" class="inp"></select></div>
+      <div><label class="f" for="lot-c">Condition</label><select id="lot-c" class="inp"><option>NM</option><option>LP</option><option>MP</option><option>HP</option><option>DMG</option></select></div>
+      <div><label class="f" for="lot-q">Quantity</label><input id="lot-q" class="inp mono" inputmode="numeric"></div>
+      <div><label class="f" for="lot-cost">Cost each (£)</label><input id="lot-cost" class="inp mono" inputmode="decimal" placeholder="what you paid"></div>
+      <div><label class="f" for="lot-price">Asking price each (£)</label><input id="lot-price" class="inp mono" inputmode="decimal"></div>
+    </div>
+    <p class="small muted" style="margin:0">Leave the asking price blank to use your selling rule (set in Price stickers). Set quantity to 0 to remove.</p>
+  </div>
+  <div class="dlg-f"><button class="btn danger hidden" id="lot-del"><svg class="i sm"><use href="#i-trash"/></svg>Remove</button><span style="flex:1"></span><button class="btn" id="lot-sell"><svg class="i sm"><use href="#i-plus"/></svg>Sell</button><button class="btn primary" id="lot-save">Save</button></div>
+</div></dialog>
+
 <dialog id="dlg-confirm"><form method="dialog" class="dlg">
   <div class="dlg-h"><h3 id="cf-title">Are you sure?</h3></div>
   <div class="dlg-b"><p id="cf-msg" style="margin:0"></p></div>
@@ -779,5 +803,6 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
 </form></dialog>
 
 <script src="app.js"></script>
+<script src="vendor.js"></script>
 </body>
 </html>

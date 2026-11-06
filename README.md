@@ -1,4 +1,4 @@
-# PokéBinder Studio v2.5
+# PokéBinder Studio v2.6
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -7,7 +7,8 @@ Track Pokémon TCG collections down to the printing, plan which binder pocket ea
 | File | Purpose |
 |---|---|
 | `index.html` | Page structure, styles and icons |
-| `app.js` | All the app logic. It's kept separate so a strict Content Security Policy can block injected scripts |
+| `app.js` | Collections, binders, prices, sharing, stickers, storage and settings |
+| `vendor.js` | The Vendor area: stock, selling, buying, trades and the ledger |
 | `sw.js` | Service worker that handles offline mode and caches card images |
 | `SECURITY.md` | Security review findings and what was fixed |
 | `manifest.webmanifest`, `icon*.png`, `icon.svg` | Lets you install it as an app (PWA) |
@@ -33,6 +34,19 @@ Put all the files in one folder on any static host, and keep `app.js` next to `i
 7. **Filters** (set, status including **Spares**, rarity, text) apply to every view, and you can carry them into export and print.
 8. **Print**: binder guide (a pocket map with tick boxes), placeholder cards (true 63 × 88 mm, 9 per A4, print at 100% scale) or a checklist.
 9. **Export and share**: a **share link** (a read-only page anyone can open, with your list packed into the link itself so nothing is uploaded), a CSV with page, slot, printing, quantity, spares, condition, paid and price columns, a text list, or JSON. **Full backup and restore** is how you move data between devices. A merge combines matching collections.
+
+## Vendor (selling at trade shows)
+
+The **Vendor** tab is separate from your binders. Collections are your personal cards; **stock** is what you're selling.
+
+- **Stock:** add cards by name or printed code, with quantity, condition, cost each and an optional asking price. Cards in stock are grouped by card, printing and condition, and the cost is averaged when you add more copies. **Move spares** takes the spare copies out of the current collection and puts them in stock, keeping their condition and what you paid as the cost. The copy in each binder pocket stays where it is.
+- **Asking price:** your own price if you've set one; otherwise the **selling rule** (% of market, rounding and minimum, set in Price stickers). Price stickers print from stock by default, and a price you type on a sticker becomes that card's asking price.
+- **Sell:** add cards from stock to a sale, adjust prices per card or set a bundle total, choose Cash, Card or Other, then **Complete sale**. Stock goes down, the sale is logged, and you can undo it.
+- **Buy:** search the customer's cards. The offer starts at your **buy %** of market, rounded down, and you can change any line. **Complete purchase** adds the cards to stock with what you paid as their cost.
+- **Trade:** give cards from stock, get the customer's cards, and compare the values in GBP. When you apply it, the cards you get take on the cost of what you gave, split by market value, so profit stays accurate when you later sell them.
+- **Ledger:** every sale, purchase and trade with time, payment method, profit per sale, and takings by method. It also shows how much cash you took in versus paid out, for Today, the last 7 days, this month or all time. Mistakes are **voided** rather than deleted: the entry stays crossed out, it's left out of the totals, and its stock changes are reversed. Both stock and ledger export as CSV.
+- **Online first, offline fallback:** when you add a card to a sale, offer or trade, the app re-checks its price if it's more than an hour old and labels it "live". With no signal it uses the last price it saved and labels it with that date. Searches fall back to cards already saved on the device.
+- **Share:** shares your stock as a "Cards for sale" link with asking prices.
 
 ## Design decisions (deliberate trade-offs)
 

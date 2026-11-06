@@ -1,6 +1,6 @@
 # PokéBinder Studio security review
 
-**App:** PokéBinder Studio v2.4.0 · **Reviewed:** 6 November 2026 · **Scope:** the whole static PWA (`index.html`, `app.js`, `sw.js`, manifest) as hosted on GitHub Pages, and its use of three public read-only APIs. Owner-authorised review. There is no backend, account system or server-side storage.
+**App:** PokéBinder Studio v2.4.0 (v2.6 addendum at the end) · **Reviewed:** 6 November 2026 · **Scope:** the whole static PWA (`index.html`, `app.js`, `sw.js`, manifest) as hosted on GitHub Pages, and its use of three public read-only APIs. Owner-authorised review. There is no backend, account system or server-side storage.
 
 ## Summary
 
@@ -83,3 +83,10 @@ All code fixes are done in v2.4. The remaining actions are yours:
 - **CSV injection:** cells starting with `= + - @` are prefixed with `'` in CSV exports.
 - **Service worker:** caches only same-origin files and card images. API responses are never cached by the worker.
 - **Share-link privacy:** the list travels in the URL fragment (`#s=…`), which browsers don't send to GitHub's servers. The people you send the link to can, of course, read it.
+
+## v2.6 addendum: Vendor area
+
+- **New stored data:** stock and the sales/purchase ledger are kept in the same browser storage as before (IndexedDB). There's still no server and no account.
+- **Restoring a backup:** stock and ledger entries go through the same field-by-field checks as everything else. IDs must match the expected pattern, quantities and prices are capped, payment methods and printings must come from a fixed list, and anything pointing at an unknown card is dropped. I tested it with a backup containing `__proto__`, impossible quantities, negative costs and `<script>` as a payment method; all of it was removed or neutralised.
+- **The ledger keeps a full record:** entries are voided, never deleted, so a wrong tap can't silently erase a sale from your records.
+- **Payment details:** none are stored. The app only records which method was used (Cash, Card or Other).
