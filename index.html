@@ -1,0 +1,1702 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1419">
+<meta name="description" content="Track Pokémon TCG collections, plan binder pages, print placeholders and export want lists. Works offline.">
+<title>PokéBinder Studio</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+/* ==========================================================================
+   PokéBinder Studio v2 — no external CSS/JS dependencies (works offline)
+   ========================================================================== */
+:root{
+  --bg:#0f1419; --panel:#161f28; --panel2:#1d2833; --line:#2a3846; --line2:#364757;
+  --text:#e6edf3; --muted:#8fa1b3; --faint:#5d6f80;
+  --accent:#ffcb05; --accent-ink:#1a1400; --blue:#3b82f6; --owned:#22c55e; --owned-bg:rgba(34,197,94,.12);
+  --danger:#ef4444; --radius:12px;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 var(--font);min-height:100vh;padding-bottom:env(safe-area-inset-bottom)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--accent)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.hidden{display:none!important}
+
+/* ---- buttons / inputs ---- */
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);background:var(--panel2);border-radius:10px;padding:8px 12px;font-size:13px;font-weight:600;white-space:nowrap;touch-action:manipulation}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.blue{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.danger{background:transparent;color:#fca5a5;border-color:#7f1d1d}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+.btn.sm{padding:5px 9px;font-size:12px;border-radius:8px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.inp,select.inp{background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:8px 10px;font-size:14px;min-width:0;width:100%}
+.inp:focus,.btn:focus-visible,.pocket:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+label.f{display:block;font-size:12px;color:var(--muted);margin:0 0 4px}
+.chk{display:flex;gap:8px;align-items:flex-start;font-size:13px;margin:6px 0}
+.chk input{margin-top:3px;accent-color:var(--accent)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.muted{color:var(--muted)} .small{font-size:12px} .mono{font-family:var(--mono)}
+
+/* ---- top bar ---- */
+.topbar{position:sticky;top:0;z-index:30;background:rgba(15,20,25,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:10px 16px;padding-top:max(10px,env(safe-area-inset-top))}
+.topbar-in{max-width:1280px;margin:0 auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.logo{width:36px;height:36px;border-radius:10px;flex:none}
+.brand h1{font-size:16px;margin:0;line-height:1.1}
+.brand p{margin:0;font-size:11px;color:var(--muted)}
+.colpick{display:flex;gap:6px;align-items:center;flex:1 1 260px;min-width:0}
+.colpick select{flex:1;min-width:0;font-weight:600}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
+
+/* ---- toolbar ---- */
+.wrap{max-width:1280px;margin:0 auto;padding:14px 16px}
+.toolbar{display:grid;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px}
+.tabs{display:inline-flex;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:3px}
+.tabs button{border:0;background:transparent;padding:6px 12px;border-radius:7px;font-size:13px;font-weight:600;color:var(--muted)}
+.tabs button[aria-selected=true]{background:var(--panel2);color:var(--text);box-shadow:0 0 0 1px var(--line2)}
+.filters{display:grid;grid-template-columns:2fr 1.4fr 1fr 1fr auto;gap:8px}
+.progress{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.progress b{color:var(--text)}
+.bar{height:8px;background:var(--bg);border-radius:99px;overflow:hidden;border:1px solid var(--line)}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--owned));transition:width .25s}
+
+/* ---- binder view ---- */
+.spread{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:0 0 22px}
+.spread-label{grid-column:1/-1;font-size:11px;color:var(--faint);letter-spacing:.08em;text-transform:uppercase;margin-bottom:-6px}
+.flat{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr));gap:14px}
+.page{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:10px}
+.page.cover{display:grid;place-items:center;color:var(--faint);font-size:12px;border-style:dashed;min-height:120px}
+.page-h{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted);margin:0 2px 8px}
+.page-h b{color:var(--text)}
+.pockets{display:grid;grid-template-columns:repeat(var(--cols),1fr);gap:8px}
+.pocket{position:relative;aspect-ratio:63/88;border-radius:8px;border:1px solid var(--line2);background:var(--bg);overflow:hidden;display:block;padding:0;text-align:left;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:border-color .15s,transform .1s}
+.pocket:active{transform:scale(.98)}
+.pocket.empty{border-style:dashed;background:transparent;cursor:default}
+.pocket img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:grayscale(1);opacity:.35;transition:opacity .2s,filter .2s}
+.pocket.owned{border-color:var(--owned);box-shadow:0 0 0 1px var(--owned) inset}
+.pocket.owned img{filter:none;opacity:1}
+.pocket.dim{opacity:.25}
+.pocket .noimg{position:absolute;inset:0;display:grid;place-items:center;padding:8px;text-align:center;font-size:11px;color:var(--muted)}
+.pocket .meta{position:absolute;left:0;right:0;bottom:0;padding:16px 6px 5px;background:linear-gradient(transparent,rgba(0,0,0,.85));font-size:10px;line-height:1.25}
+.pocket .nm{display:block;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+.pocket .no{display:block;color:#b9c6d2;font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pocket .slotno{position:absolute;top:4px;left:5px;font:600 10px var(--mono);color:#cbd5e1;background:rgba(0,0,0,.55);border-radius:5px;padding:0 4px}
+.pocket .tick{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:800;background:rgba(0,0,0,.55);color:transparent;border:1px solid #64748b}
+.pocket.owned .tick{background:var(--owned);color:#04210f;border-color:var(--owned)}
+.pocket .info{position:absolute;top:28px;right:4px;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font:700 11px Georgia,serif;background:rgba(0,0,0,.55);color:#cbd5e1;border:1px solid #475569}
+.pocket .elsewhere{position:absolute;top:52px;right:6px;width:8px;height:8px;border-radius:50%;background:var(--blue)}
+
+/* ---- checklist ---- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{position:sticky;top:0;text-align:left;font:600 11px var(--font);color:var(--muted);text-transform:uppercase;letter-spacing:.05em;padding:8px 6px;border-bottom:1px solid var(--line2);background:var(--panel)}
+.tbl td{padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+.tbl tr[data-id]{cursor:pointer}
+.tbl tr[data-id]:hover td{background:rgba(255,255,255,.03)}
+.tbl tr.owned td{background:var(--owned-bg)}
+.tbl .ck{width:22px;height:22px;border-radius:6px;border:2px solid var(--faint);display:grid;place-items:center;font-weight:800;color:transparent}
+.tbl tr.owned .ck{background:var(--owned);border-color:var(--owned);color:#04210f}
+.tbl .nm{font-weight:600}
+.tbl .sub{display:none;color:var(--muted);font-size:11px}
+.bulk{display:flex;gap:6px;flex-wrap:wrap;justify-content:space-between;align-items:center;margin-bottom:8px}
+
+/* ---- sets ---- */
+.sets{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.setcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px;text-align:left;display:grid;gap:6px}
+.setcard:hover{border-color:var(--muted)}
+.setcard .t{font-weight:700}
+.setcard.done{border-color:var(--owned)}
+
+/* ---- empty / welcome ---- */
+.welcome{max-width:620px;margin:40px auto;text-align:center;display:grid;gap:14px}
+.welcome h2{margin:0;font-size:22px}
+.welcome .row{justify-content:center}
+.empty-msg{padding:40px 10px;text-align:center;color:var(--muted)}
+
+/* ---- dialogs ---- */
+dialog{border:1px solid var(--line2);background:var(--panel);color:var(--text);border-radius:16px;padding:0;width:min(560px,calc(100vw - 24px));max-height:calc(100dvh - 24px)}
+dialog.wide{width:min(980px,calc(100vw - 24px))}
+dialog::backdrop{background:rgba(3,6,10,.7);backdrop-filter:blur(3px)}
+.dlg{display:flex;flex-direction:column;max-height:calc(100dvh - 26px)}
+.dlg-h{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}
+.dlg-h h3{margin:0;font-size:16px}
+.dlg-b{padding:14px 16px;overflow:auto;display:grid;gap:12px}
+.dlg-f{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--line)}
+.x{background:none;border:0;font-size:22px;line-height:1;color:var(--muted);padding:2px 6px}
+fieldset{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:0}
+legend{font-size:12px;color:var(--muted);padding:0 4px}
+.radio-cards{display:grid;gap:8px}
+.radio-cards label{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line2);border-radius:10px;padding:10px;cursor:pointer}
+.radio-cards label:has(input:checked){border-color:var(--accent);background:rgba(255,203,5,.06)}
+.radio-cards input{accent-color:var(--accent);margin-top:3px}
+.radio-cards small{display:block;color:var(--muted)}
+.results{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+.res{position:relative;border:2px solid transparent;border-radius:8px;overflow:hidden;background:var(--bg);aspect-ratio:63/88;cursor:pointer;padding:0}
+.res img{width:100%;height:100%;object-fit:cover;display:block;opacity:.4}
+.res.sel{border-color:var(--accent)} .res.sel img{opacity:1}
+.res.have{border-color:var(--line2)}
+.res .cap{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.8);font-size:10px;padding:3px 4px;line-height:1.2;text-align:left}
+.res .cap b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.res .badge{position:absolute;top:4px;left:4px;font-size:9px;font-weight:700;background:var(--panel2);border-radius:4px;padding:1px 4px}
+.res .noimg{position:absolute;inset:0;display:grid;place-items:center;font-size:11px;padding:6px;text-align:center}
+.info-grid{display:grid;grid-template-columns:minmax(0,200px) 1fr;gap:14px}
+.info-grid img{width:100%;border-radius:10px;display:block}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px;margin:0}
+.kv dt{color:var(--muted)} .kv dd{margin:0}
+.statusline{font-size:12px;color:var(--muted);min-height:18px}
+.price{font-family:var(--mono);white-space:nowrap}
+.stale{color:#fbbf24}
+.pricebox{border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:12px;font-size:13px;display:grid;gap:4px}
+.pricebox .big{font-size:20px;font-weight:800;font-family:var(--mono)}
+.tbl th[data-sort]{cursor:pointer;text-decoration:underline dotted}
+
+/* ---- toasts ---- */
+#toasts{position:fixed;z-index:100;left:50%;transform:translateX(-50%);bottom:max(16px,env(safe-area-inset-bottom));display:grid;gap:8px;width:min(440px,calc(100vw - 24px));pointer-events:none}
+.toast{pointer-events:auto;display:flex;justify-content:space-between;align-items:center;gap:10px;background:#0b1117;border:1px solid var(--line2);border-left:4px solid var(--blue);border-radius:10px;padding:10px 12px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.4);animation:tin .2s ease-out}
+.toast.success{border-left-color:var(--owned)} .toast.error{border-left-color:var(--danger)} .toast.warn{border-left-color:var(--accent)}
+@keyframes tin{from{opacity:0;transform:translateY(8px)}}
+
+/* ---- responsive ---- */
+@media (max-width:860px){
+  .filters{grid-template-columns:1fr 1fr}
+  .filters .q{grid-column:1/-1}
+  .spread{grid-template-columns:1fr}
+  .spread .cover{display:none}
+  .tbl .hide-m{display:none}
+  .tbl .sub{display:block}
+  .brand p{display:none}
+  .topbar{position:static}   /* don't eat a quarter of a phone screen */
+}
+@media (max-width:520px){
+  .actions .lbl{display:none}
+  .pockets{gap:5px}
+  .pocket .meta{font-size:9px;padding:12px 4px 3px}
+  .pocket .nm{font-size:10px}
+  .info-grid{grid-template-columns:1fr}
+  .info-grid img{max-width:240px;margin:0 auto}
+  .grid2{grid-template-columns:1fr}
+}
+
+/* ==========================================================================
+   PRINT — everything on screen is hidden; #print-root is built on demand
+   ========================================================================== */
+#print-root{display:none}
+@page{size:A4;margin:8mm}
+@media print{
+  body{background:#fff!important;color:#000!important;padding:0}
+  body>*:not(#print-root){display:none!important}
+  #print-root{display:block!important;font:9pt/1.3 var(--font);color:#000}
+  .p-head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1.5pt solid #000;padding-bottom:2mm;margin-bottom:3mm}
+  .p-head h1{font-size:14pt;margin:0}
+  .p-head .m{font-size:8pt;color:#333;text-align:right}
+  .p-foot{font-size:7pt;color:#555;margin-top:3mm}
+  .p-break{break-after:page}
+  /* binder guide */
+  .g-pages{display:grid;grid-template-columns:1fr 1fr;gap:4mm}
+  .g-page{border:0.8pt solid #000;border-radius:2mm;padding:2mm;break-inside:avoid}
+  .g-page h2{font-size:9pt;margin:0 0 1.5mm;display:flex;justify-content:space-between}
+  .g-page h2 span{font-weight:400;color:#444}
+  .g-grid{display:grid;grid-template-columns:repeat(var(--cols),1fr);gap:1mm}
+  .g-cell{border:0.5pt solid #777;border-radius:1mm;padding:1mm;min-height:13mm;font-size:6.5pt;line-height:1.2;position:relative;overflow:hidden}
+  .g-cell.empty{border-style:dashed;border-color:#bbb}
+  .g-cell.own{background:#e9e9e9}
+  .g-cell b{display:block;font-size:7pt;padding-right:4mm}
+  .g-cell .s{position:absolute;top:0.8mm;right:0.8mm;width:3mm;height:3mm;border:0.6pt solid #000;font-size:6pt;line-height:3mm;text-align:center}
+  .g-cell .n{position:absolute;bottom:0.6mm;right:1mm;color:#666;font-size:6pt}
+  /* placeholders */
+  .ph-sheet{display:grid;grid-template-columns:repeat(3,63mm);grid-auto-rows:88mm;gap:0;justify-content:center;break-after:page}
+  .ph-sheet:last-child{break-after:auto}
+  .ph{width:63mm;height:88mm;border:0.4pt dashed #888;padding:3mm;display:flex;flex-direction:column;gap:1.5mm;overflow:hidden;position:relative}
+  .ph .t{font-size:11pt;font-weight:800;line-height:1.1}
+  .ph .s{font-size:8pt;color:#333}
+  .ph .img{flex:1;min-height:0;display:grid;place-items:center;border:0.5pt solid #ccc;border-radius:2mm;overflow:hidden}
+  .ph .img img{max-width:100%;max-height:100%;filter:grayscale(1);opacity:.55}
+  .ph .img.none{font-size:22pt;color:#ccc;font-weight:800}
+  .ph .b{display:flex;justify-content:space-between;font-size:7pt;color:#333;border-top:0.5pt solid #ccc;padding-top:1mm}
+  .ph .need{position:absolute;top:2.5mm;right:2.5mm;font-size:6.5pt;border:0.6pt solid #000;border-radius:1mm;padding:0 1mm}
+  /* checklist */
+  .c-cols{columns:2;column-gap:6mm}
+  .c-set{break-inside:avoid-column;margin-bottom:3mm}
+  .c-set h2{font-size:9pt;margin:0 0 1mm;border-bottom:0.6pt solid #000;display:flex;justify-content:space-between}
+  .c-set h2 span{font-weight:400}
+  .c-row{display:grid;grid-template-columns:4mm 12mm 1fr auto;gap:1.5mm;align-items:center;font-size:8pt;padding:0.6mm 0;border-bottom:0.3pt solid #ddd;break-inside:avoid}
+  .c-box{width:3mm;height:3mm;border:0.6pt solid #000;font-size:6.5pt;line-height:3mm;text-align:center}
+  .c-row .r{color:#555;font-size:7pt}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#1d2833"/><path d="M8 32a24 24 0 0 1 48 0z" fill="#ef4444"/><path d="M8 32a24 24 0 0 0 48 0z" fill="#f8fafc"/><rect x="8" y="29.5" width="48" height="5" fill="#0f1419"/><circle cx="32" cy="32" r="8" fill="#f8fafc" stroke="#0f1419" stroke-width="4"/></svg>
+    <div class="brand"><h1>PokéBinder Studio</h1><p>Collections · binder planner · want lists</p></div>
+    <div class="colpick" id="colpick">
+      <label for="col-select" class="sr">Active collection</label>
+      <select id="col-select" class="inp"></select>
+      <button class="btn sm" data-act="edit-col" title="Collection settings">⚙︎</button>
+    </div>
+    <div class="actions">
+      <button id="install-btn" class="btn sm hidden">⤓ <span class="lbl">Install</span></button>
+      <button class="btn sm" data-act="new-col" title="New collection">＋ <span class="lbl">New</span></button>
+      <button class="btn sm primary" data-act="add-cards" title="Add cards">🔍 <span class="lbl">Add cards</span></button>
+      <button class="btn sm" data-act="export" title="Export / import">⇩ <span class="lbl">Export</span></button>
+      <button class="btn sm" data-act="print" title="Print">🖨 <span class="lbl">Print</span></button>
+      <button class="btn sm ghost" data-act="settings" title="Settings" aria-label="Settings">☰</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <section class="toolbar" id="toolbar">
+    <div class="row" style="justify-content:space-between">
+      <div class="tabs" role="tablist" aria-label="View">
+        <button role="tab" data-view="binder">Binder</button>
+        <button role="tab" data-view="list">Checklist</button>
+        <button role="tab" data-view="sets">Sets</button>
+      </div>
+      <div class="row small muted" id="layout-note"></div>
+    </div>
+    <div class="filters">
+      <input id="f-text" class="inp q" type="search" placeholder="Filter by name, number, set, artist…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <select id="f-set" class="inp" aria-label="Set filter"></select>
+      <select id="f-status" class="inp" aria-label="Status filter">
+        <option value="all">All cards</option><option value="needed">Needed</option><option value="owned">Owned</option>
+      </select>
+      <select id="f-rarity" class="inp" aria-label="Rarity filter"></select>
+      <button class="btn" data-act="clear-filters">Clear</button>
+    </div>
+    <div>
+      <div class="progress"><span id="prog-text"></span><span id="prog-filter"></span></div>
+      <div class="progress" style="margin-top:4px"><span id="prog-value"></span><button class="btn sm ghost" data-act="refresh-prices" id="prog-refresh" style="padding:2px 6px">↻ Refresh prices</button></div>
+      <div class="bar" style="margin-top:6px"><i id="prog-bar"></i></div>
+    </div>
+  </section>
+  <section id="view" style="margin-top:14px" aria-live="polite"></section>
+</main>
+
+<div id="print-root"></div>
+<div id="toasts" aria-live="assertive"></div>
+
+<!-- ============ Dialogs ============ -->
+<dialog id="dlg-col"><form method="dialog" class="dlg" id="form-col">
+  <div class="dlg-h"><h3 id="col-title">New collection</h3><button class="x" value="cancel" formnovalidate aria-label="Close">×</button></div>
+  <div class="dlg-b">
+    <div><label class="f" for="col-name">Name</label><input id="col-name" class="inp" required maxlength="80" placeholder="e.g. Yuka Morii master set"></div>
+    <div class="grid2">
+      <div><label class="f" for="col-layout">Binder page layout</label>
+        <select id="col-layout" class="inp">
+          <option value="2x2">4-pocket (2 × 2)</option><option value="3x3">9-pocket (3 × 3)</option>
+          <option value="4x3">12-pocket (4 wide × 3 tall)</option><option value="3x4">12-pocket (3 wide × 4 tall)</option>
+          <option value="4x4">16-pocket (4 × 4)</option>
+        </select></div>
+      <div><label class="f" for="col-sort">Binder order</label>
+        <select id="col-sort" class="inp">
+          <option value="release">Release date → set → number</option><option value="dex">National Pokédex number</option>
+          <option value="set">Set name → number</option><option value="name">Card name (A–Z)</option>
+        </select></div>
+    </div>
+    <label class="chk"><input type="checkbox" id="col-setbreaks"><span>Start each set on a new page<br><small class="muted">Pads the last page of a set with empty pockets so sets never share a page.</small></span></label>
+    <label class="chk"><input type="checkbox" id="col-startright" checked><span>Page 1 is on the right (ring binders)<br><small class="muted">Untick if your binder has a fixed page on the inside front cover. Only affects how spreads are shown.</small></span></label>
+  </div>
+  <div class="dlg-f">
+    <button type="button" class="btn danger hidden" id="col-delete">Delete</button>
+    <button type="button" class="btn hidden" id="col-dup">Duplicate</button>
+    <span style="flex:1"></span>
+    <button class="btn" value="cancel" formnovalidate>Cancel</button>
+    <button class="btn primary" value="ok" id="col-ok">Create</button>
+  </div>
+</form></dialog>
+
+<dialog id="dlg-add" class="wide"><div class="dlg">
+  <div class="dlg-h"><h3>Add cards</h3><button class="x" data-close aria-label="Close">×</button></div>
+  <div class="dlg-b">
+    <form id="form-search" class="row" style="align-items:flex-end">
+      <div style="flex:0 0 150px"><label class="f" for="s-mode">Search by</label>
+        <select id="s-mode" class="inp">
+          <option value="artist">Artist</option><option value="set">Expansion set</option>
+          <option value="name">Card name</option><option value="advanced">Advanced query</option>
+        </select></div>
+      <div style="flex:1 1 220px"><label class="f" for="s-term">Search term</label>
+        <input id="s-term" class="inp" list="set-list" placeholder="e.g. Yuka Morii" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required></div>
+      <button class="btn blue" id="s-go">Search</button>
+      <button type="button" class="btn" data-act="custom-card">＋ Custom card</button>
+    </form>
+    <datalist id="set-list"></datalist>
+    <label class="chk" id="s-unc-wrap" style="margin:0"><input type="checkbox" id="s-uncredited"><span>Also list every card with <b>no artist credit</b> to pick by eye (slower; TCGdex usually covers these) <small class="muted" id="s-unc-note"></small></span></label>
+    <div class="statusline" id="s-status">Searches the Pokémon TCG API. Offline? Results come from cards you've already synced.</div>
+    <div class="row hidden" id="s-tools">
+      <button class="btn sm" data-sel="all">Select all</button>
+      <button class="btn sm" data-sel="none">None</button>
+      <button class="btn sm" data-sel="pokemon">Pokémon only</button>
+      <button class="btn sm" data-sel="new">Hide ones I've added</button>
+      <button class="btn sm hidden" data-sel="jump" id="s-jump">↓ Uncredited cards</button>
+      <span class="small muted" id="s-count"></span>
+    </div>
+    <div class="results" id="s-results"></div>
+    <section id="s-extra" class="hidden" style="display:grid;gap:8px;border-top:1px solid var(--line);padding-top:12px">
+      <div><b>Uncredited cards — pick the ones by <span id="s-extra-artist"></span></b>
+        <p class="small muted" style="margin:2px 0 0">The API has no artist for these, so no artist search can find them. None are selected. Cards you add get the artist assigned, so future searches and exports include them.</p></div>
+      <input id="s-extra-filter" class="inp" type="search" placeholder="Filter these by Pokémon name, set or number (e.g. Mankey)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="small muted" id="s-extra-count"></div>
+      <div class="results" id="s-extra-results"></div>
+    </section>
+  </div>
+  <div class="dlg-f" style="align-items:center">
+    <div class="row" style="flex:1;min-width:240px">
+      <label class="chk" style="margin:0"><input type="radio" name="s-target" value="current" checked> <span>Add to <b id="s-target-name">current</b></span></label>
+      <label class="chk" style="margin:0"><input type="radio" name="s-target" value="new"> <span>New collection</span></label>
+      <input id="s-newname" class="inp hidden" style="max-width:220px" placeholder="Collection name">
+    </div>
+    <button class="btn" data-close>Close</button>
+    <button class="btn primary" id="s-add" disabled>Add 0 cards</button>
+  </div>
+</div></dialog>
+
+<dialog id="dlg-custom"><form method="dialog" class="dlg" id="form-custom">
+  <div class="dlg-h"><h3>Custom card</h3><button class="x" value="cancel" formnovalidate aria-label="Close">×</button></div>
+  <div class="dlg-b">
+    <p class="small muted" style="margin:0">For promos, Japanese prints or anything missing from the API. Added to the current collection.</p>
+    <div><label class="f" for="cc-name">Card name *</label><input id="cc-name" class="inp" required></div>
+    <div class="grid2">
+      <div><label class="f" for="cc-number">Number</label><input id="cc-number" class="inp" placeholder="e.g. 125/198"></div>
+      <div><label class="f" for="cc-date">Release date</label><input id="cc-date" class="inp" type="date"></div>
+      <div><label class="f" for="cc-set">Set</label><input id="cc-set" class="inp" list="set-list" placeholder="e.g. Promo"></div>
+      <div><label class="f" for="cc-rarity">Rarity</label><input id="cc-rarity" class="inp"></div>
+      <div><label class="f" for="cc-artist">Artist</label><input id="cc-artist" class="inp"></div>
+      <div><label class="f" for="cc-img">Image URL (optional)</label><input id="cc-img" class="inp" type="url"></div>
+    </div>
+  </div>
+  <div class="dlg-f"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Save card</button></div>
+</form></dialog>
+
+<dialog id="dlg-info"><div class="dlg">
+  <div class="dlg-h"><h3 id="i-title">Card</h3><button class="x" data-close aria-label="Close">×</button></div>
+  <div class="dlg-b" id="i-body"></div>
+  <div class="dlg-f">
+    <button class="btn danger" id="i-remove">Remove from collection</button>
+    <span style="flex:1"></span>
+    <button class="btn primary" id="i-toggle">Mark owned</button>
+  </div>
+</div></dialog>
+
+<dialog id="dlg-export"><div class="dlg">
+  <div class="dlg-h"><h3>Export &amp; backup</h3><button class="x" data-close aria-label="Close">×</button></div>
+  <div class="dlg-b">
+    <fieldset><legend>What to export</legend>
+      <div class="grid2">
+        <div><label class="f" for="e-scope">Collections</label>
+          <select id="e-scope" class="inp"><option value="current">Current collection</option><option value="all">All collections</option></select></div>
+        <div><label class="f" for="e-status">Status</label>
+          <select id="e-status" class="inp"><option value="all">All cards</option><option value="needed">Needed only (want list)</option><option value="owned">Owned only</option></select></div>
+        <div><label class="f" for="e-set">Set</label><select id="e-set" class="inp"></select></div>
+        <div><label class="f" for="e-rarity">Rarity</label><select id="e-rarity" class="inp"></select></div>
+      </div>
+      <label class="chk"><input type="checkbox" id="e-text"><span>Also apply the text filter "<b id="e-text-val"></b>"</span></label>
+      <div class="small muted" id="e-count"></div>
+    </fieldset>
+    <fieldset><legend>Format</legend>
+      <div class="radio-cards">
+        <label><input type="radio" name="e-fmt" value="csv" checked><span>CSV spreadsheet<small>Opens cleanly in Excel (UTF-8, binder page &amp; slot columns).</small></span></label>
+        <label><input type="radio" name="e-fmt" value="txt"><span>Text list<small>Grouped by set — ideal for sending a want list to a trader. Can copy to clipboard.</small></span></label>
+        <label><input type="radio" name="e-fmt" value="json"><span>JSON (filtered cards)<small>Machine-readable list of the cards above.</small></span></label>
+      </div>
+    </fieldset>
+    <fieldset><legend>Full backup</legend>
+      <p class="small muted" style="margin:0 0 8px">Your data lives in this browser only. Back up regularly, and use this to move between devices.</p>
+      <div class="row">
+        <button class="btn" id="e-backup">⇩ Download backup</button>
+        <label class="btn" for="e-restore-file">⇧ Restore backup…</label>
+        <input type="file" id="e-restore-file" accept="application/json,.json" class="sr">
+        <select id="e-restore-mode" class="inp" style="width:auto"><option value="merge">Merge with existing</option><option value="replace">Replace everything</option></select>
+      </div>
+    </fieldset>
+  </div>
+  <div class="dlg-f"><button class="btn" data-close>Close</button><button class="btn hidden" id="e-copy">Copy text</button><button class="btn primary" id="e-go">Download</button></div>
+</div></dialog>
+
+<dialog id="dlg-print"><div class="dlg">
+  <div class="dlg-h"><h3>Print</h3><button class="x" data-close aria-label="Close">×</button></div>
+  <div class="dlg-b">
+    <div class="radio-cards">
+      <label><input type="radio" name="p-type" value="guide" checked><span>Binder guide<small>Page-by-page pocket map: which card goes in which slot, with tick boxes. ~6 binder pages per A4.</small></span></label>
+      <label><input type="radio" name="p-type" value="placeholders"><span>Placeholder cards<small>Card-sized (63 × 88 mm) cut-outs to slip into empty pockets, labelled with page &amp; slot. 9 per A4.</small></span></label>
+      <label><input type="radio" name="p-type" value="checklist"><span>Checklist<small>Compact two-column tick list grouped by set.</small></span></label>
+    </div>
+    <fieldset><legend>Options</legend>
+      <label class="chk"><input type="checkbox" id="p-filters"><span>Apply the current filters <small class="muted" id="p-filter-desc"></small></span></label>
+      <label class="chk" id="p-needed-wrap"><input type="checkbox" id="p-needed"><span>Needed cards only</span></label>
+      <label class="chk" id="p-img-wrap"><input type="checkbox" id="p-img" checked><span>Include card images (greyscale, saves ink)</span></label>
+    </fieldset>
+    <p class="small muted" style="margin:0">Tip: set your print dialog to A4, 100% scale (not "fit to page") so placeholders come out at true card size.</p>
+  </div>
+  <div class="dlg-f"><button class="btn" data-close>Cancel</button><button class="btn primary" id="p-go">Print</button></div>
+</div></dialog>
+
+<dialog id="dlg-settings"><div class="dlg">
+  <div class="dlg-h"><h3>Settings</h3><button class="x" data-close aria-label="Close">×</button></div>
+  <div class="dlg-b">
+    <div><label class="f" for="st-key">Pokémon TCG API key (optional)</label>
+      <div class="row"><input id="st-key" class="inp" type="password" autocomplete="off" style="flex:1" placeholder="Paste key to raise rate limits"><button type="button" class="btn sm" id="st-key-show">Show</button></div>
+      <p class="small muted" style="margin:4px 0 0">Stored only in this browser and sent only to api.pokemontcg.io. Works without a key, but with lower rate limits.</p></div>
+    <label class="chk"><input type="checkbox" id="st-tcgdex"><span>Fill in missing artist credits from <b>TCGdex</b><br><small class="muted">A second community database (api.tcgdex.net) that credits newer cards the Pokémon TCG API leaves blank. Only used for artist searches.</small></span></label>
+    <div><label class="f" for="st-gaps">Sets with missing artist credits (set IDs, comma-separated)</label>
+      <input id="st-gaps" class="inp mono" autocomplete="off">
+      <p class="small muted" style="margin:4px 0 0">Artist searches also show uncredited cards from these sets. Leave blank to restore the default list.</p></div>
+    <fieldset><legend>Prices</legend>
+      <div class="grid2">
+        <div><label class="f" for="st-psrc">Price source</label>
+          <select id="st-psrc" class="inp"><option value="cardmarket">Cardmarket — EU market (EUR → GBP)</option><option value="tcgplayer">TCGplayer — US market (USD → GBP)</option></select></div>
+        <div><label class="f">Exchange rate override (optional)</label>
+          <div class="row" style="flex-wrap:nowrap"><input id="st-fx-eur" class="inp mono" inputmode="decimal" placeholder="£ per €1"><input id="st-fx-usd" class="inp mono" inputmode="decimal" placeholder="£ per $1"></div></div>
+      </div>
+      <div class="small muted" id="st-fx-status" style="margin-top:6px"></div>
+      <div class="row" style="margin-top:8px"><button class="btn sm" id="st-fx-refresh">↻ Refresh exchange rate</button><button class="btn sm" data-act="refresh-prices">↻ Refresh prices for this collection</button></div>
+    </fieldset>
+    <fieldset><legend>Storage</legend>
+      <div class="small" id="st-usage">…</div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn sm" id="st-persist">Ask browser to keep data</button>
+        <button class="btn sm" id="st-prune">Remove unused cached cards</button>
+        <button class="btn sm danger" id="st-reset">Reset everything</button>
+      </div>
+    </fieldset>
+    <p class="small muted" style="margin:0">PokéBinder Studio <span id="st-ver"></span>. Card data and images © their respective owners, via the Pokémon TCG API. Fan-made tool, not affiliated with Nintendo, Creatures, GAME FREAK or The Pokémon Company.</p>
+  </div>
+  <div class="dlg-f"><button class="btn primary" data-close>Done</button></div>
+</div></dialog>
+
+<dialog id="dlg-confirm"><form method="dialog" class="dlg">
+  <div class="dlg-h"><h3 id="cf-title">Are you sure?</h3></div>
+  <div class="dlg-b"><p id="cf-msg" style="margin:0"></p></div>
+  <div class="dlg-f"><button class="btn" value="no">Cancel</button><button class="btn danger" value="yes" id="cf-yes">Confirm</button></div>
+</form></dialog>
+
+<script>
+'use strict';
+/* ==========================================================================
+   CONFIG — change here, nothing else is environment-specific
+   ========================================================================== */
+const CONFIG = {
+  version: '2.3.0',
+  apiBase: 'https://api.pokemontcg.io/v2',
+  pageSize: 250,           // API max
+  maxRetries: 4,           // for 429 / 5xx, exponential back-off
+  setsCacheDays: 7,        // how long the set list (for autocomplete) is cached
+  defaultLayout: '3x3',
+  storageKey: 'state',     // IndexedDB key
+  undoMs: 7000,
+  /* Sets where the Pokémon TCG API has missing artist credits (whole sets from sv7 onwards are blank).
+     Checked against PokemonTCG/pokemon-tcg-data, Sep 2026. Artist searches also pull uncredited cards
+     from these sets so you can pick them by eye. Editable in Settings. */
+  uncreditedSets: ['sv7','sv8','sv8pt5','sv9','sv10','me1','me3','me5','svp','swsh12pt5','sv2'],
+  uncreditedCacheDays: 7,
+  /* TCGdex (https://tcgdex.dev) — second community card database, used only to fill missing artist credits. */
+  tcgdexBase: 'https://api.tcgdex.net/v2/en',
+  tcgdexCacheDays: 7,
+  /* Prices: the Pokémon TCG API returns Cardmarket (EUR, European market — closest to UK) and
+     TCGplayer (USD, US market). Neither is in GBP, so we convert using the ECB reference rate. */
+  priceSource: 'cardmarket',       // default; changeable in Settings
+  priceStaleDays: 14,              // flag prices whose source date is older than this
+  priceBatch: 60,                  // card IDs per API call when refreshing prices
+  fxUrl: 'https://api.frankfurter.dev/v1/latest?base=EUR&symbols=GBP,USD',   // ECB rates, no key
+  fxCacheHours: 12
+};
+/* TCGdex set ID → Pokémon TCG API set ID. Generated 2026-11-06 by matching set names (and release dates)
+   across both open datasets; checked against all 212 physical Yuka Morii cards (100% matched).
+   Sets not listed fall back to: learned mappings → the pattern rule (sv07→sv7, sv08.5→sv8pt5) → set-name lookup. */
+const TCGDEX_SET_MAP = {"2011bw":"mcd11","2012bw":"mcd12","2014xy":"mcd14","2015xy":"mcd15","2016xy":"mcd16","2017sm":"mcd17","2018sm":"mcd18","2019sm":"mcd19","2021swsh":"mcd21","2022swsh":"mcd22","30th":"me55","base1":"base1","base2":"base2","base3":"base3","base4":"base4","base5":"base5","basep":"basep","bog":"bp","bw1":"bw1","bw10":"bw10","bw11":"bw11","bw2":"bw2","bw3":"bw3","bw4":"bw4","bw5":"bw5","bw6":"bw6","bw7":"bw7","bw8":"bw8","bw9":"bw9","bwp":"bwp","cel25":"cel25","cel25cc":"cel25c","col1":"col1","dc1":"dc1","det1":"det1","dp1":"dp1","dp2":"dp2","dp3":"dp3","dp4":"dp4","dp5":"dp5","dp6":"dp6","dp7":"dp7","dpp":"dpp","dv1":"dv1","ecard1":"ecard1","ecard2":"ecard2","ecard3":"ecard3","ex1":"ex1","ex10":"ex10","ex11":"ex11","ex12":"ex12","ex13":"ex13","ex14":"ex14","ex15":"ex15","ex16":"ex16","ex2":"ex2","ex3":"ex3","ex4":"ex4","ex5":"ex5","ex6":"ex6","ex7":"ex7","ex8":"ex8","ex9":"ex9","g1":"g1","gym1":"gym1","gym2":"gym2","hgss1":"hgss1","hgss2":"hgss2","hgss3":"hgss3","hgss4":"hgss4","hgssp":"hsp","lc":"base6","me01":"me1","me02":"me2","me02.5":"me2pt5","me03":"me3","me04":"me4","me05":"me5","neo1":"neo1","neo2":"neo2","neo3":"neo3","neo4":"neo4","np":"np","pl1":"pl1","pl2":"pl2","pl3":"pl3","pl4":"pl4","pop1":"pop1","pop2":"pop2","pop3":"pop3","pop4":"pop4","pop5":"pop5","pop6":"pop6","pop7":"pop7","pop8":"pop8","pop9":"pop9","ru1":"ru1","si1":"si1","sm1":"sm1","sm10":"sm10","sm11":"sm11","sm115":"sm115","sm12":"sm12","sm2":"sm2","sm3":"sm3","sm3.5":"sm35","sm4":"sm4","sm5":"sm5","sm6":"sm6","sm7":"sm7","sm7.5":"sm75","sm8":"sm8","sm9":"sm9","sma":"sma","smp":"smp","sv01":"sv1","sv02":"sv2","sv03":"sv3","sv03.5":"sv3pt5","sv04":"sv4","sv04.5":"sv4pt5","sv05":"sv5","sv06":"sv6","sv06.5":"sv6pt5","sv07":"sv7","sv08":"sv8","sv08.5":"sv8pt5","sv09":"sv9","sv10":"sv10","sv10.5b":"zsv10pt5","sv10.5w":"rsv10pt5","sve":"sve","svp":"svp","swsh1":"swsh1","swsh10":"swsh10","swsh10.5":"pgo","swsh10tg":"swsh10tg","swsh11":"swsh11","swsh11tg":"swsh11tg","swsh12":"swsh12","swsh12.5":"swsh12pt5","swsh12.5gg":"swsh12pt5gg","swsh12tg":"swsh12tg","swsh2":"swsh2","swsh3":"swsh3","swsh3.5":"swsh35","swsh4":"swsh4","swsh4.5":"swsh45","swsh4.5sv":"swsh45sv","swsh5":"swsh5","swsh6":"swsh6","swsh7":"swsh7","swsh8":"swsh8","swsh9":"swsh9","swsh9tg":"swsh9tg","swshp":"swshp","tk-ex-latia":"tk1a","tk-ex-latio":"tk1b","tk-ex-m":"tk2b","tk-ex-p":"tk2a","xy0":"xy0","xy1":"xy1","xy10":"xy10","xy11":"xy11","xy12":"xy12","xy2":"xy2","xy3":"xy3","xy4":"xy4","xy5":"xy5","xy6":"xy6","xy7":"xy7","xy8":"xy8","xy9":"xy9","xyp":"xyp"};
+const LAYOUTS = { '2x2':[2,2], '3x3':[3,3], '4x3':[4,3], '3x4':[3,4], '4x4':[4,4] };
+const SORT_LABEL = { release:'release date', dex:'Pokédex no.', set:'set name', name:'card name' };
+
+/* ---------- helpers ---------- */
+const $  = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const slug = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'x';
+const cmpNum = (a, b) => String(a).localeCompare(String(b), undefined, { numeric:true, sensitivity:'base' });
+const sleep = (ms, signal) => new Promise((res, rej) => { const t = setTimeout(res, ms); signal?.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('Aborted','AbortError')); }); });
+const today = () => new Date().toISOString().slice(0,10);
+const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
+
+/* ---------- storage: IndexedDB with localStorage fallback ---------- */
+const Store = {
+  db: null,
+  open() {
+    return new Promise(res => {
+      if (!('indexedDB' in window)) return res(null);
+      try {
+        const r = indexedDB.open('pokebinder', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('kv');
+        r.onsuccess = () => res(this.db = r.result);
+        r.onerror = r.onblocked = () => res(null);
+      } catch { res(null); }
+    });
+  },
+  get(k) {
+    if (!this.db) { try { return Promise.resolve(JSON.parse(localStorage.getItem('pb2_' + k))); } catch { return Promise.resolve(null); } }
+    return new Promise(res => {
+      const q = this.db.transaction('kv').objectStore('kv').get(k);
+      q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null);
+    });
+  },
+  set(k, v) {
+    if (!this.db) { localStorage.setItem('pb2_' + k, JSON.stringify(v)); return Promise.resolve(); }
+    return new Promise((res, rej) => {
+      const tx = this.db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put(v, k);
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
+    });
+  }
+};
+
+/* ---------- state ---------- */
+let S;   // persisted state
+const UI = { view:'binder', filters:{ text:'', set:'all', status:'all', rarity:'all' }, search:{ results:[], extra:[], extraFilter:'', artist:'', badges:new Map(), noSel:new Set(), sel:new Set(), abort:null, hideHave:false }, infoId:null, layout:null };
+
+const blankState = () => ({ version:2, cards:{}, collections:{}, order:[], activeId:null,
+  settings:{ apiKey:'', view:'binder' }, setsCache:null });
+const newCollection = (name, opts={}) => ({ id:'c_' + uid(), name, cardIds:[], owned:{},
+  layout: opts.layout || CONFIG.defaultLayout, sort: opts.sort || 'release',
+  setBreaks: !!opts.setBreaks, startRight: opts.startRight ?? true, created: Date.now(), updated: Date.now() });
+const active = () => S.collections[S.activeId] || null;
+
+let saveTimer;
+function save() { clearTimeout(saveTimer); saveTimer = setTimeout(flush, 250); }
+async function flush() {
+  clearTimeout(saveTimer);
+  try { await Store.set(CONFIG.storageKey, S); }
+  catch (e) { toast('Could not save — storage may be full. Export a backup. (' + (e?.message || e) + ')', 'error'); }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
+
+/* ---------- card normalisation ---------- */
+function normApi(c) {
+  return { id:c.id, name:c.name || '?', number:String(c.number ?? ''), set_id:c.set?.id || 'unknown', set_name:c.set?.name || 'Unknown set',
+    series:c.set?.series || '', release_date:(c.set?.releaseDate || '').replace(/\//g,'-'), artist:c.artist || '', rarity:c.rarity || '',
+    dex:c.nationalPokedexNumbers?.[0] ?? null, supertype:c.supertype || '', img_s:c.images?.small || '', img_l:c.images?.large || '', custom:false,
+    ...(normPrice(c) ? { price:normPrice(c) } : {}) };   // omit when absent so a merge never wipes older prices
+}
+/* Keep the native-currency figures + the source's own date; convert to GBP at display time. */
+function normPrice(c) {
+  const out = {}, cm = c.cardmarket, tp = c.tcgplayer, d = s => (s || '').replace(/\//g, '-').slice(0, 10);
+  if (cm?.prices) {
+    const P = cm.prices;
+    const hit = [['trend', P.trendPrice], ['30-day avg', P.avg30], ['avg sell', P.averageSellPrice], ['low', P.lowPrice]].find(([, v]) => v > 0);
+    if (hit) out.cm = { value:hit[1], metric:hit[0], low:P.lowPrice ?? null, avg30:P.avg30 ?? null, updated:d(cm.updatedAt), url:cm.url || '' };
+  }
+  if (tp?.prices) {
+    const pref = ['normal','holofoil','1stEditionHolofoil','1stEditionNormal','unlimitedHolofoil','reverseHolofoil'];
+    const keys = [...pref.filter(k => tp.prices[k]), ...Object.keys(tp.prices).filter(k => !pref.includes(k))];
+    for (const k of keys) { const v = tp.prices[k], val = v?.market ?? v?.mid;
+      if (val > 0) { out.tcp = { value:val, metric:`${v.market != null ? 'market' : 'mid'}, ${k.replace(/([A-Z])/g, ' $1').toLowerCase()}`, low:v.low ?? null, updated:d(tp.updatedAt), url:tp.url || '' }; break; } }
+  }
+  if (!out.cm && !out.tcp) return null;
+  out.fetched = new Date().toISOString();
+  return out;
+}
+function normV1(c) {   // cards from PokéBinder v1 localStorage
+  const img = c.image_url || '';
+  return { id:c.card_id, name:c.name || '?', number:String(c.number ?? ''), set_id:c.set_code || 'unknown', set_name:c.set_name || 'Unknown set',
+    series:'', release_date:(c.release_date || '').replace(/\//g,'-'), artist:c.artist || '', rarity:'', dex:null, supertype:'',
+    img_s:img, img_l:img.replace(/\.png$/, '_hires.png'), custom:c.set_code === 'custom' || String(c.card_id).startsWith('custom-') };
+}
+function migrateV1() {
+  let db, cols, owned;
+  try {
+    db = JSON.parse(localStorage.getItem('poke_master_db') || 'null');
+    cols = JSON.parse(localStorage.getItem('poke_user_collections') || 'null');
+    owned = JSON.parse(localStorage.getItem('poke_collected_ids') || '{}') || {};
+  } catch { return null; }
+  if (!cols || !Object.keys(cols).length) return null;
+  const st = blankState();
+  (db || []).forEach(c => { if (c?.card_id) st.cards[c.card_id] = normV1(c); });
+  for (const [name, arr] of Object.entries(cols)) {
+    const col = newCollection(name);
+    for (const c of (arr || [])) {
+      if (!c?.card_id) continue;
+      st.cards[c.card_id] ??= normV1(c);
+      if (!col.cardIds.includes(c.card_id)) col.cardIds.push(c.card_id);
+      if (owned[c.card_id]) col.owned[c.card_id] = true;
+    }
+    st.collections[col.id] = col; st.order.push(col.id);
+  }
+  st.activeId = st.order[0] || null;
+  return st;
+}
+
+/* ---------- sorting, filtering, binder layout ---------- */
+const SORTS = {
+  release: (a,b) => (a.release_date||'9999').localeCompare(b.release_date||'9999') || a.set_id.localeCompare(b.set_id) || cmpNum(a.number,b.number) || a.name.localeCompare(b.name),
+  dex:     (a,b) => (a.dex ?? 1e6) - (b.dex ?? 1e6) || SORTS.release(a,b),
+  set:     (a,b) => a.set_name.localeCompare(b.set_name) || cmpNum(a.number,b.number),
+  name:    (a,b) => a.name.localeCompare(b.name) || SORTS.release(a,b)
+};
+const cardsOf = col => col.cardIds.map(id => S.cards[id]).filter(Boolean);
+
+/* Binder positions are computed over the WHOLE collection (never the filtered view)
+   so a card's page/slot is stable regardless of what you're filtering on. */
+function computeLayout(col) {
+  const [cols, rows] = LAYOUTS[col.layout] || LAYOUTS['3x3'];
+  const per = cols * rows;
+  const cards = cardsOf(col).sort(SORTS[col.sort] || SORTS.release);
+  const slots = []; let lastSet = null;
+  for (const c of cards) {
+    if (col.setBreaks && lastSet !== null && c.set_id !== lastSet) while (slots.length % per) slots.push(null);
+    slots.push(c); lastSet = c.set_id;
+  }
+  const pages = [];
+  for (let i = 0; i < slots.length; i += per) pages.push(slots.slice(i, i + per));
+  if (pages.length) { const last = pages[pages.length - 1]; while (last.length < per) last.push(null); }
+  const pos = new Map();
+  pages.forEach((p, pi) => p.forEach((c, si) => { if (c) pos.set(c.id, { page:pi + 1, slot:si + 1 }); }));
+  return { cols, rows, per, cards, pages, pos };
+}
+function spreadOf(page, startRight) {
+  return startRight ? { spread:Math.floor(page / 2) + 1, side:page % 2 ? 'right' : 'left' }
+                    : { spread:Math.ceil(page / 2),      side:page % 2 ? 'left' : 'right' };
+}
+const posLabel = (col, p) => { if (!p) return '—'; const s = spreadOf(p.page, col.startRight); return `Page ${p.page}, slot ${p.slot} (spread ${s.spread}, ${s.side})`; };
+
+function filtersActive(f = UI.filters) { return !!(f.text || f.set !== 'all' || f.status !== 'all' || f.rarity !== 'all'); }
+function matches(c, col, f = UI.filters) {
+  if (f.set !== 'all' && c.set_id !== f.set) return false;
+  if (f.rarity !== 'all' && (c.rarity || '—') !== f.rarity) return false;
+  const own = !!col.owned[c.id];
+  if (f.status === 'owned' && !own) return false;
+  if (f.status === 'needed' && own) return false;
+  if (f.text) {
+    const hay = `${c.name} ${c.number} ${c.set_name} ${c.set_id} ${c.artist} ${c.rarity} ${c.series}`.toLowerCase();
+    if (!f.text.toLowerCase().split(/\s+/).filter(Boolean).every(t => hay.includes(t))) return false;
+  }
+  return true;
+}
+function ownedElsewhere(id, exceptId) {
+  return S.order.filter(cid => cid !== exceptId && S.collections[cid]?.owned[id]).map(cid => S.collections[cid].name);
+}
+
+/* ==========================================================================
+   RENDER
+   ========================================================================== */
+function render() {
+  const col = active();
+  renderHeader(col);
+  $('#toolbar').classList.toggle('hidden', !col);
+  if (!col) { renderWelcome(); return; }
+  UI.layout = computeLayout(col);
+  renderFilterOptions(col);
+  renderProgress();
+  renderView();
+}
+
+function renderHeader(col) {
+  const sel = $('#col-select');
+  sel.innerHTML = S.order.map(id => { const c = S.collections[id]; return `<option value="${esc(id)}"${id === S.activeId ? ' selected' : ''}>${esc(c.name)} (${c.cardIds.length})</option>`; }).join('');
+  $('#colpick').classList.toggle('hidden', !col);
+  $$('[data-view]').forEach(b => b.setAttribute('aria-selected', b.dataset.view === UI.view));
+  if (col) {
+    const [c, r] = LAYOUTS[col.layout] || [3,3];
+    $('#layout-note').textContent = `${c * r}-pocket · ordered by ${SORT_LABEL[col.sort] || col.sort}${col.setBreaks ? ' · new page per set' : ''}`;
+  }
+}
+
+function renderFilterOptions(col) {
+  const cards = UI.layout.cards;
+  const sets = new Map();
+  [...cards].sort(SORTS.release).forEach(c => { if (!sets.has(c.set_id)) sets.set(c.set_id, c); });
+  const f = UI.filters;
+  if (f.set !== 'all' && !sets.has(f.set)) f.set = 'all';
+  $('#f-set').innerHTML = `<option value="all">All sets (${sets.size})</option>` +
+    [...sets.values()].map(c => `<option value="${esc(c.set_id)}"${c.set_id === f.set ? ' selected' : ''}>${esc(c.set_name)}${c.release_date ? ' · ' + c.release_date.slice(0,4) : ''}</option>`).join('');
+  const rar = [...new Set(cards.map(c => c.rarity || '—'))].sort();
+  if (f.rarity !== 'all' && !rar.includes(f.rarity)) f.rarity = 'all';
+  $('#f-rarity').innerHTML = `<option value="all">All rarities</option>` + rar.map(r => `<option${r === f.rarity ? ' selected' : ''}>${esc(r)}</option>`).join('');
+  $('#f-status').value = f.status;
+  if ($('#f-text').value !== f.text) $('#f-text').value = f.text;
+}
+
+/* ---------- prices ---------- */
+const GBP = new Intl.NumberFormat('en-GB', { style:'currency', currency:'GBP' });
+const NATIVE = { EUR:new Intl.NumberFormat('en-GB', { style:'currency', currency:'EUR' }), USD:new Intl.NumberFormat('en-GB', { style:'currency', currency:'USD' }) };
+function fxRate(cur) {
+  const m = parseFloat(S.settings.fx?.[cur]); if (m > 0) return m;
+  if (!S.fx) return null;
+  return cur === 'EUR' ? S.fx.eur : S.fx.usd;
+}
+function fxLabel(cur) {
+  if (parseFloat(S.settings.fx?.[cur]) > 0) return `your rate £${S.settings.fx[cur]} per ${cur === 'EUR' ? '€' : '$'}1`;
+  return S.fx ? `£${(cur === 'EUR' ? S.fx.eur : S.fx.usd).toFixed(4)} per ${cur === 'EUR' ? '€' : '$'}1, ECB ${S.fx.date}` : 'no exchange rate yet';
+}
+/* → { gbp, native, cur, src, metric, date, url, fetched, stale, fallback } or null */
+function priceOf(c) {
+  const pr = c?.price; if (!pr) return null;
+  const pref = S.settings.priceSource || CONFIG.priceSource;
+  const order = pref === 'tcgplayer' ? ['tcp','cm'] : ['cm','tcp'];
+  for (const k of order) {
+    const q = pr[k]; if (!q || !(q.value > 0)) continue;
+    const cur = k === 'cm' ? 'EUR' : 'USD', rate = fxRate(cur);
+    const age = q.updated ? (Date.now() - Date.parse(q.updated)) / 864e5 : Infinity;
+    return { gbp:rate ? q.value * rate : null, native:q.value, cur, src:k === 'cm' ? 'Cardmarket' : 'TCGplayer', metric:q.metric,
+      date:q.updated, url:q.url, fetched:pr.fetched, stale:age > CONFIG.priceStaleDays, fallback:k !== order[0] };
+  }
+  return null;
+}
+const fmtPrice = pi => !pi ? '—' : pi.gbp != null ? GBP.format(pi.gbp) : NATIVE[pi.cur].format(pi.native);
+const priceTitle = pi => !pi ? 'No price in the API' : `${pi.src} ${pi.metric}: ${NATIVE[pi.cur].format(pi.native)} · price date ${pi.date || 'unknown'}${pi.stale ? ' (stale)' : ''} · ${fxLabel(pi.cur)}`;
+function sumValue(cards) {
+  let gbp = 0, priced = 0, unconverted = 0, minD = '', maxD = '';
+  for (const c of cards) { const pi = priceOf(c); if (!pi) continue;
+    if (pi.gbp == null) { unconverted++; continue; }
+    gbp += pi.gbp; priced++;
+    if (pi.date) { if (!minD || pi.date < minD) minD = pi.date; if (pi.date > maxD) maxD = pi.date; } }
+  return { gbp, priced, unpriced:cards.length - priced - unconverted, unconverted, minD, maxD };
+}
+const dateRange = v => !v.minD ? '' : v.minD === v.maxD ? v.minD : `${v.minD} → ${v.maxD}`;
+
+async function loadFx(force) {
+  if (!force && S.fx && Date.now() - S.fx.fetchedAt < CONFIG.fxCacheHours * 36e5) return;
+  try {
+    const r = await fetch(CONFIG.fxUrl); if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    if (!(j.rates?.GBP > 0 && j.rates?.USD > 0)) throw new Error('unexpected response');
+    S.fx = { date:j.date, eur:j.rates.GBP, usd:j.rates.GBP / j.rates.USD, fetchedAt:Date.now() };
+    save(); if (active()) { renderProgress(); if (UI.view !== 'binder') renderView(); }
+    if (force) toast(`Exchange rate updated: €1 = £${S.fx.eur.toFixed(4)} (ECB ${S.fx.date})`, 'success');
+  } catch (e) { if (force || !S.fx) toast(`Couldn't get an exchange rate (${e.message}). ${S.fx ? 'Using the last one saved.' : 'Prices show in EUR/USD until it works, or set a rate in Settings.'}`, 'warn'); }
+}
+async function refreshPrices() {
+  const col = active(); if (!col) return;
+  const ids = col.cardIds.filter(id => S.cards[id] && !S.cards[id].custom);
+  if (!ids.length) { toast('No API cards to price', 'warn'); return; }
+  const btns = $$('[data-act=refresh-prices]'); btns.forEach(b => b.disabled = true);
+  let done = 0, got = 0;
+  try {
+    for (let i = 0; i < ids.length; i += CONFIG.priceBatch) {
+      const batch = ids.slice(i, i + CONFIG.priceBatch);
+      $('#prog-value').textContent = `Refreshing prices… ${done} / ${ids.length}`;
+      const cards = await apiFetchAll('(' + batch.map(id => `id:"${id.replace(/"/g, '')}"`).join(' OR ') + ')');
+      cards.forEach(c => { mergeCard(c); if (c.price) got++; });
+      done += batch.length;
+    }
+    await loadFx(); save(); render();
+    toast(`Prices refreshed for ${got} of ${ids.length} cards`, 'success');
+  } catch (e) { render(); toast(`Price refresh stopped after ${done} cards: ${e.message}`, 'error'); }
+  finally { btns.forEach(b => b.disabled = false); }
+}
+
+function renderProgress() {
+  const col = active(); if (!col) return;
+  const cards = UI.layout.cards;
+  const own = cards.filter(c => col.owned[c.id]).length;
+  const p = pct(own, cards.length);
+  $('#prog-text').innerHTML = `<b>${own} / ${cards.length}</b> owned (${p}%) · ${UI.layout.pages.length} binder page${UI.layout.pages.length === 1 ? '' : 's'}`;
+  $('#prog-bar').style.width = p + '%';
+  if (filtersActive()) {
+    const shown = cards.filter(c => matches(c, col));
+    const so = shown.filter(c => col.owned[c.id]).length;
+    $('#prog-filter').textContent = `Filtered: ${so} / ${shown.length} owned (${pct(so, shown.length)}%)`;
+  } else $('#prog-filter').textContent = '';
+  // value line
+  const base = filtersActive() ? cards.filter(c => matches(c, col)) : cards;
+  const vo = sumValue(base.filter(c => col.owned[c.id])), vn = sumValue(base.filter(c => !col.owned[c.id]));
+  const all = sumValue(base), unp = base.length - all.priced;
+  const src = (S.settings.priceSource || CONFIG.priceSource) === 'tcgplayer' ? 'TCGplayer' : 'Cardmarket';
+  $('#prog-value').innerHTML = all.priced
+    ? `${filtersActive() ? 'Filtered value' : 'Value'}: owned <b class="price">${GBP.format(vo.gbp)}</b> · to complete <b class="price">${GBP.format(vn.gbp)}</b>${unp ? ` · ${unp} unpriced` : ''} · ${src}, price dates ${esc(dateRange(all))}`
+    : (all.unconverted ? 'Prices loaded but no exchange rate yet — check Settings' : 'No prices yet — tap Refresh prices');
+}
+
+function renderView() {
+  const col = active(); const v = $('#view');
+  if (!col) return;
+  if (!UI.layout.cards.length) {
+    v.innerHTML = `<div class="empty-msg"><p>This collection is empty.</p><div class="row" style="justify-content:center"><button class="btn primary" data-act="add-cards">🔍 Add cards</button><button class="btn" data-act="custom-card">＋ Custom card</button></div></div>`;
+    return;
+  }
+  if (UI.view === 'list') v.innerHTML = listHtml(col);
+  else if (UI.view === 'sets') v.innerHTML = setsHtml(col);
+  else v.innerHTML = binderHtml(col);
+}
+
+function pocketHtml(c, col, slot, dimmed) {
+  if (!c) return `<div class="pocket empty" aria-hidden="true"></div>`;
+  const own = !!col.owned[c.id];
+  const elsewhere = !own && ownedElsewhere(c.id, col.id).length;
+  return `<div class="pocket${own ? ' owned' : ''}${dimmed ? ' dim' : ''}" role="button" tabindex="0" data-id="${esc(c.id)}" data-act="toggle" aria-pressed="${own}" aria-label="${esc(c.name)} ${esc(c.number)}, ${own ? 'owned' : 'needed'}" title="${esc(c.name)} · ${esc(c.set_name)} ${esc(c.number)}">
+    ${c.img_s ? `<img src="${esc(c.img_s)}" alt="" loading="lazy" decoding="async">` : `<span class="noimg">${esc(c.name)}<br>${esc(c.number)}</span>`}
+    <span class="slotno">${slot}</span><span class="tick">✓</span>
+    <span class="info" data-act="info" role="button" aria-label="Details for ${esc(c.name)}">i</span>
+    ${elsewhere ? `<span class="elsewhere" title="Owned in another collection"></span>` : ''}
+    <span class="meta"><span class="nm">${esc(c.name)}</span><span class="no">${esc(c.number)} · ${esc(c.set_id)}</span></span>
+  </div>`;
+}
+
+function binderHtml(col) {
+  const L = UI.layout, fa = filtersActive();
+  const pageHtml = (p, pi) => {
+    const pageNo = pi + 1, sp = spreadOf(pageNo, col.startRight);
+    const n = p.filter(Boolean).length, o = p.filter(c => c && col.owned[c.id]).length;
+    return `<article class="page" style="--cols:${L.cols}" aria-label="Binder page ${pageNo}">
+      <header class="page-h"><b>Page ${pageNo}</b><span>Spread ${sp.spread} · ${sp.side}</span><span>${o}/${n}</span></header>
+      <div class="pockets">${p.map((c, si) => pocketHtml(c, col, si + 1, fa && c && !matches(c, col))).join('')}</div></article>`;
+  };
+  if (fa) {   // filtered: only pages that contain a match, flat grid
+    const out = L.pages.map((p, i) => p.some(c => c && matches(c, col)) ? pageHtml(p, i) : '').join('');
+    return out ? `<div class="flat">${out}</div>` : `<div class="empty-msg">No cards match these filters.</div>`;
+  }
+  const items = L.pages.map(pageHtml);
+  if (col.startRight) items.unshift(`<div class="page cover">Inside front cover</div>`);
+  let html = '';
+  for (let i = 0, s = 1; i < items.length; i += 2, s++) {
+    html += `<section class="spread"><div class="spread-label">Spread ${s}</div>${items[i]}${items[i + 1] || '<div></div>'}</section>`;
+  }
+  return html;
+}
+
+function listHtml(col) {
+  const L = UI.layout;
+  const rows = L.cards.filter(c => matches(c, col));
+  if (!rows.length) return `<div class="empty-msg">No cards match these filters.</div>`;
+  if (UI.listSort === 'value') rows.sort((a, b) => (priceOf(b)?.gbp ?? priceOf(b)?.native ?? -1) - (priceOf(a)?.gbp ?? priceOf(a)?.native ?? -1));
+  return `<div class="panel"><div class="bulk"><span class="small muted">${rows.length} card${rows.length === 1 ? '' : 's'} · tap a row to tick it off</span>
+    <div class="row"><button class="btn sm" data-act="bulk-own">Mark shown as owned</button><button class="btn sm" data-act="bulk-need">Mark shown as needed</button></div></div>
+    <div style="overflow-x:auto"><table class="tbl"><thead><tr><th></th><th>Card</th><th class="hide-m">No.</th><th class="hide-m">Set</th><th class="hide-m">Released</th><th class="hide-m">Rarity</th><th class="hide-m">Artist</th><th data-sort="value" data-act="sort-value" title="Sort by value">${UI.listSort === 'value' ? 'Value ↓' : 'Value'}</th><th>Binder</th><th></th></tr></thead><tbody>
+    ${rows.map(c => { const own = !!col.owned[c.id], p = L.pos.get(c.id), pi = priceOf(c);
+      return `<tr data-id="${esc(c.id)}" data-act="toggle" class="${own ? 'owned' : ''}"><td><span class="ck" role="checkbox" aria-checked="${own}">✓</span></td>
+        <td><span class="nm">${esc(c.name)}</span><span class="sub">${esc(c.number)} · ${esc(c.set_name)}${c.rarity ? ' · ' + esc(c.rarity) : ''}</span></td>
+        <td class="hide-m mono">${esc(c.number)}</td><td class="hide-m">${esc(c.set_name)}</td><td class="hide-m mono small">${esc(c.release_date || '—')}</td>
+        <td class="hide-m small">${esc(c.rarity || '—')}</td><td class="hide-m small">${esc(c.artist || '—')}</td>
+        <td class="price small${pi?.stale ? ' stale' : ''}" title="${esc(priceTitle(pi))}">${fmtPrice(pi)}</td>
+        <td class="mono small" title="${esc(posLabel(col, p))}">${p ? `p${p.page}·${p.slot}` : '—'}</td>
+        <td><button class="btn sm ghost" data-act="info" aria-label="Details">ⓘ</button></td></tr>`; }).join('')}
+    </tbody></table></div></div>`;
+}
+
+function setsHtml(col) {
+  const groups = new Map();
+  for (const c of [...UI.layout.cards].sort(SORTS.release)) {
+    if (!groups.has(c.set_id)) groups.set(c.set_id, { c, n:0, o:0, need:[] });
+    const g = groups.get(c.set_id); g.n++; if (col.owned[c.id]) g.o++; else g.need.push(c);
+  }
+  return `<div class="sets">${[...groups.entries()].map(([id, g]) => { const p = pct(g.o, g.n);
+    return `<button class="setcard${g.o === g.n ? ' done' : ''}" data-act="goto-set" data-set="${esc(id)}">
+      <span class="t">${esc(g.c.set_name)}</span><span class="small muted">${esc(g.c.series || '')}${g.c.series ? ' · ' : ''}${esc(g.c.release_date || 'no date')} · ${esc(id)}</span>
+      <span class="row small" style="justify-content:space-between"><span><b>${g.o}</b> / ${g.n} owned</span><span>${p}%</span></span>
+      <span class="bar"><i style="width:${p}%"></i></span>
+      ${g.need.length ? (v => v.priced ? `<span class="small muted">To complete ≈ <b class="price">${GBP.format(v.gbp)}</b>${v.priced < g.need.length ? ` (${g.need.length - v.priced} unpriced)` : ''}</span>` : '')(sumValue(g.need)) : ''}</button>`; }).join('')}</div>`;
+}
+
+function renderWelcome() {
+  $('#view').innerHTML = `<div class="welcome">
+    <h2>Build your first binder</h2>
+    <p class="muted">Create a collection, pull in cards by artist, set or Pokémon, then tick them off as you collect. PokéBinder works out exactly which page and pocket each card belongs in.</p>
+    <div class="row"><button class="btn primary" data-act="add-cards">🔍 Search &amp; create</button><button class="btn" data-act="new-col">＋ Empty collection</button><button class="btn" data-act="export">⇧ Restore a backup</button></div>
+  </div>`;
+}
+
+/* Fast path: update one card's DOM without a full re-render (keeps scroll position). */
+function refreshCard(id) {
+  const col = active(), own = !!col.owned[id];
+  $$(`[data-id="${CSS.escape(id)}"]`, $('#view')).forEach(el => {
+    el.classList.toggle('owned', own);
+    if (el.matches('.pocket')) { el.setAttribute('aria-pressed', own); el.querySelector('.elsewhere')?.remove(); }
+    const ck = el.querySelector('.ck'); if (ck) ck.setAttribute('aria-checked', own);
+  });
+  // page header counters in binder view
+  if (UI.view === 'binder') $$('.page', $('#view')).forEach(pg => {
+    const ps = $$('.pocket[data-id]', pg); const h = pg.querySelector('.page-h span:last-child');
+    if (h && ps.some(p => p.dataset.id === id)) h.textContent = `${ps.filter(p => p.classList.contains('owned')).length}/${ps.length}`;
+  });
+}
+
+/* ==========================================================================
+   ACTIONS
+   ========================================================================== */
+function setOwned(ids, val) {
+  const col = active();
+  ids.forEach(id => { if (val) col.owned[id] = true; else delete col.owned[id]; });
+  col.updated = Date.now(); save();
+}
+function toggleOwned(id) {
+  const col = active(); setOwned([id], !col.owned[id]);
+  refreshCard(id); renderProgress();
+  if (UI.view === 'sets') renderView();
+}
+function switchCollection(id) {
+  if (!S.collections[id]) return;
+  S.activeId = id; UI.filters = { text:'', set:'all', status:'all', rarity:'all' };
+  save(); render(); window.scrollTo({ top:0 });
+}
+
+/* undo: snapshot collection data (cards are never deleted by undoable actions) */
+function snapshot() { return JSON.stringify({ collections:S.collections, order:S.order, activeId:S.activeId }); }
+function undoable(msg, snap) {
+  toast(msg, 'info', { label:'Undo', fn:() => { Object.assign(S, JSON.parse(snap)); save(); render(); toast('Undone', 'success'); } });
+}
+
+/* ---------- collection dialog ---------- */
+let colMode = 'new';
+function openColDialog(mode) {
+  colMode = mode; const col = active();
+  const isEdit = mode === 'edit' && col;
+  $('#col-title').textContent = isEdit ? 'Collection settings' : 'New collection';
+  $('#col-ok').textContent = isEdit ? 'Save' : 'Create';
+  $('#col-name').value = isEdit ? col.name : '';
+  $('#col-layout').value = isEdit ? col.layout : CONFIG.defaultLayout;
+  $('#col-sort').value = isEdit ? col.sort : 'release';
+  $('#col-setbreaks').checked = isEdit ? col.setBreaks : false;
+  $('#col-startright').checked = isEdit ? col.startRight : true;
+  $('#col-delete').classList.toggle('hidden', !isEdit);
+  $('#col-dup').classList.toggle('hidden', !isEdit);
+  $('#dlg-col').showModal();
+}
+$('#form-col').addEventListener('submit', e => {
+  if (e.submitter?.value !== 'ok') return;
+  const name = $('#col-name').value.trim(); if (!name) { e.preventDefault(); return; }
+  const opts = { layout:$('#col-layout').value, sort:$('#col-sort').value, setBreaks:$('#col-setbreaks').checked, startRight:$('#col-startright').checked };
+  if (colMode === 'edit' && active()) { Object.assign(active(), opts, { name, updated:Date.now() }); toast('Collection updated', 'success'); }
+  else { const c = newCollection(uniqueName(name), opts); S.collections[c.id] = c; S.order.push(c.id); S.activeId = c.id; toast(`Created "${c.name}"`, 'success'); }
+  save(); render();
+});
+$('#col-dup').addEventListener('click', () => {
+  const src = active(); const c = { ...structuredClone(src), id:'c_' + uid(), name:uniqueName(src.name + ' (copy)'), created:Date.now(), updated:Date.now() };
+  S.collections[c.id] = c; S.order.splice(S.order.indexOf(src.id) + 1, 0, c.id); S.activeId = c.id;
+  $('#dlg-col').close(); save(); render(); toast(`Duplicated as "${c.name}"`, 'success');
+});
+$('#col-delete').addEventListener('click', async () => {
+  const col = active();
+  if (!await confirmDlg('Delete collection?', `"${col.name}" and its owned ticks (${Object.keys(col.owned).length}) will be removed. Cards stay cached for other collections.`, 'Delete')) return;
+  const snap = snapshot();
+  delete S.collections[col.id]; S.order = S.order.filter(id => id !== col.id); S.activeId = S.order[0] || null;
+  $('#dlg-col').close(); save(); render(); undoable(`Deleted "${col.name}"`, snap);
+});
+function uniqueName(name) {
+  const names = new Set(S.order.map(id => S.collections[id].name.toLowerCase()));
+  if (!names.has(name.toLowerCase())) return name;
+  let i = 2; while (names.has(`${name} ${i}`.toLowerCase())) i++; return `${name} ${i}`;
+}
+
+/* ---------- confirm dialog (promise) ---------- */
+function confirmDlg(title, msg, yes = 'Confirm') {
+  return new Promise(res => {
+    const d = $('#dlg-confirm'); $('#cf-title').textContent = title; $('#cf-msg').textContent = msg; $('#cf-yes').textContent = yes;
+    d.returnValue = ''; d.showModal(); d.addEventListener('close', () => res(d.returnValue === 'yes'), { once:true });
+  });
+}
+
+/* ---------- info dialog ---------- */
+function openInfo(id) {
+  const col = active(), c = S.cards[id]; if (!c) return;
+  UI.infoId = id;
+  const p = UI.layout.pos.get(id), els = ownedElsewhere(id, col.id);
+  const others = S.order.filter(cid => cid !== col.id && !S.collections[cid].cardIds.includes(id));
+  $('#i-title').textContent = c.name;
+  $('#i-body').innerHTML = `<div class="info-grid">
+    ${c.img_l || c.img_s ? `<img src="${esc(c.img_l || c.img_s)}" alt="${esc(c.name)}">` : `<div class="page cover">No image</div>`}
+    <div><dl class="kv">
+      <dt>Number</dt><dd class="mono">${esc(c.number || '—')}</dd>
+      <dt>Set</dt><dd>${esc(c.set_name)} <span class="muted mono small">${esc(c.set_id)}</span></dd>
+      ${c.series ? `<dt>Series</dt><dd>${esc(c.series)}</dd>` : ''}
+      <dt>Released</dt><dd>${esc(c.release_date || '—')}</dd>
+      <dt>Rarity</dt><dd>${esc(c.rarity || '—')}</dd>
+      <dt>Artist</dt><dd><input id="i-artist" class="inp" style="padding:4px 8px;font-size:13px" value="${esc(c.artist)}" placeholder="Not credited in API — type to set">${c.artist_assigned ? '<small class="muted">set by you</small>' : c.artist_tcgdex ? '<small class="muted">credit from TCGdex (blank in the Pokémon TCG API)</small>' : ''}</dd>
+      ${c.dex ? `<dt>Pokédex</dt><dd>#${c.dex}</dd>` : ''}
+      <dt>Binder</dt><dd>${esc(posLabel(col, p))}</dd>
+      <dt>Status</dt><dd id="i-status">${col.owned[id] ? '✓ Owned' : 'Needed'}</dd>
+      ${els.length ? `<dt>Also owned in</dt><dd>${els.map(esc).join(', ')}</dd>` : ''}
+    </dl>
+    ${priceBoxHtml(c)}
+    ${others.length ? `<div class="row" style="margin-top:12px"><select id="i-copy-to" class="inp" style="flex:1">${others.map(cid => `<option value="${esc(cid)}">${esc(S.collections[cid].name)}</option>`).join('')}</select><button class="btn sm" id="i-copy">Copy to</button></div>` : ''}
+    ${c.custom ? '' : `<p class="small" style="margin:12px 0 0"><a href="https://pokemontcg.io" target="_blank" rel="noopener">Card data: Pokémon TCG API</a> · <span class="mono muted">${esc(c.id)}</span></p>`}
+    </div></div>`;
+  $('#i-toggle').textContent = col.owned[id] ? 'Mark as needed' : 'Mark as owned';
+  $('#i-artist').addEventListener('change', e => {
+    const v = e.target.value.trim(); c.artist = v; c.artist_assigned = !!v; delete c.artist_tcgdex; save();
+    toast(v ? `Artist set to ${v}` : 'Artist cleared', 'success'); openInfo(id); if (UI.view === 'list') renderView();
+  });
+  $('#i-copy')?.addEventListener('click', () => {
+    const t = S.collections[$('#i-copy-to').value]; t.cardIds.push(id); t.updated = Date.now(); save(); renderHeader(active());
+    toast(`Copied to "${t.name}"`, 'success'); openInfo(id);
+  });
+  if (!$('#dlg-info').open) $('#dlg-info').showModal();
+}
+$('#i-toggle').addEventListener('click', () => { toggleOwned(UI.infoId); openInfo(UI.infoId); });
+$('#i-remove').addEventListener('click', () => {
+  const col = active(), id = UI.infoId, snap = snapshot();
+  col.cardIds = col.cardIds.filter(x => x !== id); delete col.owned[id]; col.updated = Date.now();
+  $('#dlg-info').close(); save(); render(); undoable(`Removed ${S.cards[id]?.name || 'card'}`, snap);
+});
+
+function priceBoxHtml(c) {
+  if (c.custom) return '';
+  const pi = priceOf(c), pr = c.price;
+  if (!pi) return `<div class="pricebox"><span class="muted">No price in the API for this card.</span><button class="btn sm" data-act="refresh-one" style="justify-self:start">↻ Check again</button></div>`;
+  const line = (k, label, cur) => { const q = pr[k]; if (!q) return ''; const r = fxRate(cur);
+    return `<div class="small">${label}: <span class="price">${NATIVE[cur].format(q.value)}</span>${r ? ` ≈ <span class="price">${GBP.format(q.value * r)}</span>` : ''} <span class="muted">(${esc(q.metric)}${q.low ? `, low ${NATIVE[cur].format(q.low)}` : ''})</span> · price date <b>${esc(q.updated || '?')}</b>${q.url ? ` · <a href="${esc(q.url)}" target="_blank" rel="noopener">view</a>` : ''}</div>`; };
+  return `<div class="pricebox"><div><span class="big">${fmtPrice(pi)}</span> <span class="small muted">${pi.src} ${esc(pi.metric)}${pi.fallback ? ' (preferred source has no price)' : ''}</span></div>
+    <div class="small${pi.stale ? ' stale' : ''}">Price date ${esc(pi.date || 'unknown')}${pi.stale ? ` — older than ${CONFIG.priceStaleDays} days, tap refresh` : ''} · fetched ${new Date(pi.fetched).toLocaleDateString('en-GB')} · ${esc(fxLabel(pi.cur))}</div>
+    ${line('cm', 'Cardmarket (EU)', 'EUR')}${line('tcp', 'TCGplayer (US)', 'USD')}
+    <button class="btn sm" data-act="refresh-one" style="justify-self:start">↻ Refresh this price</button></div>`;
+}
+
+/* ---------- API search ---------- */
+function apiHeaders() { return S.settings.apiKey ? { 'X-Api-Key': S.settings.apiKey } : {}; }
+/* Phone keyboards turn " into “ ”, capitalise the first word (Artist:) and can add a space after
+   a colon. The API's field names are case-sensitive and it only understands straight quotes, so any
+   of these gives HTTP 400. Fix them up before sending. */
+const API_FIELDS = ['id','name','supertype','subtypes','hp','types','evolvesFrom','evolvesTo','rules','abilities.name','abilities.text','attacks.name',
+  'attacks.text','attacks.damage','attacks.cost','convertedRetreatCost','weaknesses.type','resistances.type','number','artist','rarity','flavorText',
+  'nationalPokedexNumbers','regulationMark','legalities.standard','legalities.expanded','legalities.unlimited',
+  'set.id','set.name','set.series','set.releaseDate','set.ptcgoCode','set.legalities.standard','set.legalities.expanded','set.legalities.unlimited'];
+const FIELD_MAP = Object.fromEntries(API_FIELDS.map(f => [f.toLowerCase(), f]));
+function cleanAdvanced(q) {
+  return q.replace(/[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB]/g, '"').replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
+    .replace(/[`\u00A0]/g, m => m === '`' ? '' : ' ')
+    .replace(/([\w.]+)\s*:\s+/g, '$1:')                                          // "artist: Yuka" → "artist:Yuka"
+    .replace(/(^|[\s(])([-!]?)([A-Za-z][\w.]*):/g, (m, pre, neg, f) => pre + neg + (FIELD_MAP[f.toLowerCase()] || f) + ':')
+    .replace(/\s+/g, ' ').trim();
+}
+function buildQuery(mode, term) {
+  const t = term.trim(), q = t.replace(/["\\]/g, '');
+  if (mode === 'advanced') return cleanAdvanced(t);
+  if (mode === 'artist') return `artist:"${q}"`;
+  if (mode === 'set') {
+    const hit = (S.setsCache?.data || []).find(s => s.name.toLowerCase() === q.toLowerCase() || s.id.toLowerCase() === q.toLowerCase());
+    return hit ? `set.id:${hit.id}` : `set.name:"${q}"`;
+  }
+  // card name: single word → prefix wildcard (Pikachu → Pikachu V, Pikachu ex…); phrase → exact phrase
+  return /\s/.test(q) ? `name:"${q}"` : `name:${q.replace(/[^\p{L}\p{N}'.\-é]/gu, '')}*`;
+}
+async function apiFetchAll(query, onProgress, signal) {
+  const select = 'id,name,number,artist,rarity,supertype,nationalPokedexNumbers,set,images,tcgplayer,cardmarket';
+  let page = 1, retries = 0, total = Infinity; const all = [];
+  while (all.length < total) {
+    const url = `${CONFIG.apiBase}/cards?q=${encodeURIComponent(query)}&page=${page}&pageSize=${CONFIG.pageSize}&orderBy=set.releaseDate&select=${select}`;
+    const res = await fetch(url, { headers:apiHeaders(), signal });
+    if (res.status === 429 || res.status >= 500) {
+      if (++retries > CONFIG.maxRetries) throw new Error(`API busy (HTTP ${res.status}). Try again shortly${S.settings.apiKey ? '' : ', or add an API key in Settings'}.`);
+      onProgress?.(all.length, total, `API busy — retrying in ${2 ** retries}s…`);
+      await sleep(1000 * 2 ** retries, signal); continue;
+    }
+    if (!res.ok) {
+      let msg = ''; try { const j = await res.json(); msg = j?.error?.message || j?.message || ''; } catch {}
+      const err = new Error(`HTTP ${res.status}${msg ? ': ' + msg : ''}`); err.status = res.status; err.query = query; throw err;
+    }
+    retries = 0;
+    const j = await res.json(); const d = j.data || [];
+    total = j.totalCount ?? d.length; all.push(...d);
+    onProgress?.(all.length, total);
+    if (!d.length || d.length < CONFIG.pageSize) break;
+    page++;
+  }
+  return all.map(normApi);
+}
+/* Merge fresh API data into the cache without losing an artist credit that came from you or TCGdex
+   (the API returns an empty artist for those cards, which must not overwrite it). Once the API itself
+   credits a card, its credit wins and the provenance flags are dropped. */
+function mergeCard(c) {
+  const old = S.cards[c.id], m = { ...old, ...c };
+  const ours = c.artist_assigned || c.artist_tcgdex;
+  if (!c.artist && old?.artist) { m.artist = old.artist; }
+  else if (c.artist && !ours) { delete m.artist_assigned; delete m.artist_tcgdex; }
+  if (!c.price && old?.price) m.price = old.price;
+  S.cards[c.id] = m;
+}
+const artistSource = c => c.artist_assigned ? 'assigned by you' : c.artist_tcgdex ? 'TCGdex' : (c.artist ? 'API' : '');
+
+/* ---------- TCGdex: fill in missing artist credits ---------- */
+const normName = s => String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const isPocketSet = id => /^(?:[AB]\d+[a-z]?|P-[AB])$/.test(id);   // TCG Pocket (digital only) — never in a binder
+function ruleSetId(id) { const m = id.match(/^([a-z]+)0*(\d+)(?:\.(5))?$/i); return m ? `${m[1].toLowerCase()}${m[2]}${m[3] ? 'pt5' : ''}` : id; }
+async function tcgdexJson(path, signal) {
+  const r = await fetch(`${CONFIG.tcgdexBase}${path}`, { signal });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`TCGdex HTTP ${r.status}`);
+  return r.json();
+}
+async function mapTcgdexSet(id, signal) {
+  if (TCGDEX_SET_MAP[id]) return TCGDEX_SET_MAP[id];
+  S.tcgdexSetMap ||= {};
+  if (id in S.tcgdexSetMap) return S.tcgdexSetMap[id];
+  await loadSets();
+  const ptSets = S.setsCache?.data || [];
+  let hit = ptSets.find(s => s.id === ruleSetId(id))?.id || null;
+  if (!hit) {   // new set: look up its name on TCGdex and match by name (+ release date if ambiguous)
+    try {
+      const td = await tcgdexJson(`/sets/${encodeURIComponent(id)}`, signal);
+      if (td?.serie?.id === 'tcgp') hit = null;
+      else if (td?.name) {
+        const c = ptSets.filter(s => normName(s.name) === normName(td.name));
+        const d = c.filter(s => (s.releaseDate || '').replace(/\//g, '-') === td.releaseDate);
+        hit = (d.length === 1 ? d[0] : c.length === 1 ? c[0] : null)?.id || null;
+      }
+    } catch (e) { if (e.name === 'AbortError') throw e; return ruleSetId(id); }   // don't cache a guess
+  }
+  if (hit) { S.tcgdexSetMap[id] = hit; save(); }   // only remember confirmed matches; unknown sets are retried
+  return hit;
+}
+/* Returns cards TCGdex credits to this artist that the API search didn't return, as full API cards
+   (images, prices) with the artist filled in. Each match is verified: same card name on both sides. */
+async function tcgdexEnrich(artist, apiResults, onProgress, signal) {
+  const haveIds = new Set(apiResults.map(c => c.id));
+  const key = artist.toLowerCase(); S.tcgdexCache ||= {};
+  let list = S.tcgdexCache[key];
+  if (!list || Date.now() - list.ts > CONFIG.tcgdexCacheDays * 864e5) {
+    onProgress?.('Checking TCGdex for missing credits…');
+    const j = await tcgdexJson(`/illustrators/${encodeURIComponent(artist)}`, signal);
+    list = S.tcgdexCache[key] = { ts:Date.now(), cards:(j?.cards || []).map(c => ({ id:c.id, localId:String(c.localId), name:c.name })) };
+    save();
+  }
+  const out = { added:[], disputed:[], unmatched:[], pocket:0, total:list.cards.length };
+  const want = [];
+  for (const t of list.cards) {
+    const setId = t.id.slice(0, t.id.length - t.localId.length - 1);
+    if (isPocketSet(setId)) { out.pocket++; continue; }
+    const pt = await mapTcgdexSet(setId, signal);
+    if (!pt) { out.unmatched.push(`${t.name} (${setId} ${t.localId})`); continue; }
+    const ptId = `${pt}-${t.localId.replace(/^0+(?=\d)/, '')}`;
+    if (!haveIds.has(ptId)) want.push({ ...t, ptId });
+  }
+  if (!want.length) return out;
+  onProgress?.(`Fetching ${want.length} card(s) credited by TCGdex…`);
+  const got = new Map();
+  for (let i = 0; i < want.length; i += CONFIG.priceBatch) {
+    const ids = want.slice(i, i + CONFIG.priceBatch).map(w => `id:"${w.ptId}"`).join(' OR ');
+    (await apiFetchAll(`(${ids})`, null, signal)).forEach(c => got.set(c.id, c));
+  }
+  const proper = apiResults.map(c => c.artist).find(a => a && a.toLowerCase() === key) || artist;   // use the API's spelling/case
+  for (const w of want) {
+    const c = got.get(w.ptId);
+    if (!c || normName(c.name) !== normName(w.name)) { out.unmatched.push(`${w.name} (${w.id})`); continue; }
+    if (c.artist && c.artist.toLowerCase() !== key) { out.disputed.push({ ...c, tcgdexArtist:proper }); continue; }
+    out.added.push({ ...c, artist:proper, artist_tcgdex:true });
+  }
+  return out;
+}
+function gapSets() {
+  const s = (S.settings.uncreditedSets || '').split(/[\s,]+/).filter(Boolean);
+  return s.length ? s : CONFIG.uncreditedSets;
+}
+/* All cards with an empty artist in the gap sets. Cached for a week; cards are kept in S.cards. */
+async function fetchUncredited(onProgress, signal) {
+  const sets = gapSets(), key = sets.join(',');
+  const gc = S.gapCache;
+  const fresh = gc && gc.key === key && (Date.now() - gc.ts) < CONFIG.uncreditedCacheDays * 864e5 && gc.ids.every(id => S.cards[id]);
+  if (fresh) return gc.ids.map(id => S.cards[id]);
+  const q = '(' + sets.map(id => `set.id:${id.replace(/[^\w.-]/g, '')}`).join(' OR ') + ')';
+  const cards = (await apiFetchAll(q, onProgress, signal)).filter(c => !c.artist);
+  cards.forEach(mergeCard);
+  S.gapCache = { ts:Date.now(), key, ids:cards.map(c => c.id) }; save();
+  return cards.map(c => S.cards[c.id]);
+}
+function localSearch(mode, term) {
+  const t = term.toLowerCase().trim();
+  return Object.values(S.cards).filter(c =>
+    mode === 'artist' ? c.artist.toLowerCase().includes(t) :
+    mode === 'set' ? (c.set_name.toLowerCase().includes(t) || c.set_id.toLowerCase() === t) :
+    mode === 'name' ? c.name.toLowerCase().includes(t) :
+    `${c.name} ${c.artist} ${c.set_name}`.toLowerCase().includes(t)).sort(SORTS.release);
+}
+async function loadSets() {
+  const fresh = S.setsCache && (Date.now() - S.setsCache.ts) < CONFIG.setsCacheDays * 864e5;
+  if (!fresh) {
+    try {
+      const r = await fetch(`${CONFIG.apiBase}/sets?orderBy=-releaseDate&pageSize=250&select=id,name,series,releaseDate`, { headers:apiHeaders() });
+      if (r.ok) { S.setsCache = { ts:Date.now(), data:(await r.json()).data || [] }; save(); }
+    } catch { /* offline — use stale cache */ }
+  }
+  $('#set-list').innerHTML = (S.setsCache?.data || []).map(s => `<option value="${esc(s.name)}">${esc(s.series)} · ${esc((s.releaseDate || '').slice(0,4))}</option>`).join('');
+}
+
+function openAdd() {
+  const col = active();
+  $('#s-target-name').textContent = col ? col.name : '—';
+  $$('input[name=s-target]').forEach(r => { r.disabled = r.value === 'current' && !col; r.checked = col ? r.value === 'current' : r.value === 'new'; });
+  $('#s-newname').classList.toggle('hidden', !!col);
+  $('#s-unc-note').textContent = `(${gapSets().length} sets: ${gapSets().join(', ')})`;
+  $('#s-unc-wrap').classList.toggle('hidden', $('#s-mode').value !== 'artist');
+  renderResults();
+  $('#dlg-add').showModal();
+  if (!$('#s-term').value) $('#s-term').focus();
+  loadSets();
+}
+$('#s-mode').addEventListener('change', e => {
+  const ph = { artist:'e.g. Yuka Morii', set:'e.g. Scarlet & Violet—151', name:'e.g. Pikachu or Rare Candy', advanced:'e.g. artist:"Mitsuhiro Arita" rarity:"Rare Holo"' };
+  $('#s-term').placeholder = ph[e.target.value];
+  $('#s-term').setAttribute('list', e.target.value === 'set' ? 'set-list' : '');
+  $('#s-unc-wrap').classList.toggle('hidden', e.target.value !== 'artist');
+});
+$('#form-search').addEventListener('submit', async e => {
+  e.preventDefault();
+  const mode = $('#s-mode').value, term = $('#s-term').value.trim(); if (!term) return;
+  UI.search.abort?.abort(); const ac = UI.search.abort = new AbortController();
+  const status = $('#s-status'), btn = $('#s-go');
+  btn.disabled = true; status.textContent = 'Searching…';
+  let results = [], extra = [], offline = false;
+  const wantGaps = mode === 'artist' && $('#s-uncredited').checked;
+  const prog = label => (n, total, note) => { status.textContent = note || `${label}: fetched ${n}${isFinite(total) ? ' of ' + total : ''} cards…`; };
+  let td = null, tdError = '';
+  UI.search.badges = new Map(); UI.search.noSel = new Set();
+  try {
+    results = await apiFetchAll(buildQuery(mode, term), prog(mode === 'artist' ? 'Artist search' : 'Search'), ac.signal);
+    if (mode === 'artist' && S.settings.tcgdex !== false) {
+      try { td = await tcgdexEnrich(term, results, note => { status.textContent = note; }, ac.signal); }
+      catch (e) { if (e.name === 'AbortError') throw e; tdError = e.message; }
+      if (td) {
+        td.added.forEach(c => UI.search.badges.set(c.id, 'via TCGdex'));
+        td.disputed.forEach(c => { UI.search.badges.set(c.id, `API: ${c.artist}`); UI.search.noSel.add(c.id); });
+        results = [...results, ...td.added, ...td.disputed];
+      }
+    }
+    if (wantGaps) extra = await fetchUncredited(prog('Uncredited cards'), ac.signal);
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    if (err.status >= 400 && err.status < 500 && err.status !== 429) {   // the API understood us and said no: not an offline problem
+      status.innerHTML = `The API rejected the query (${esc(err.message)}).<br>Sent: <code class="mono">${esc(err.query)}</code>${mode === 'advanced' ? '<br>Field names are case-sensitive, e.g. <code>artist:</code>, <code>set.id:</code>, <code>nationalPokedexNumbers:</code>. Use straight quotes for phrases.' : ''}`;
+      UI.search.results = []; UI.search.extra = []; renderResults(); return;
+    }
+    offline = true; results = results.length ? results : localSearch(mode, term);
+    if (wantGaps && S.gapCache) extra = S.gapCache.ids.map(id => S.cards[id]).filter(Boolean);
+    status.textContent = `Couldn't reach the API (${err.message}). Showing ${results.length} matching card(s) already saved on this device.`;
+  } finally { btn.disabled = false; }
+  if (mode === 'artist') {
+    // cards you previously assigned to this artist join the main results; the rest stay "uncredited"
+    const t = term.toLowerCase(), ids = new Set(results.map(c => c.id));
+    const assigned = Object.values(S.cards).filter(c => (c.artist_assigned || c.artist_tcgdex) && c.artist.toLowerCase().includes(t) && !ids.has(c.id));
+    assigned.forEach(c => UI.search.badges.set(c.id, c.artist_tcgdex ? 'via TCGdex' : 'set by you'));
+    results = [...results, ...assigned].sort(SORTS.release);
+    assigned.forEach(c => ids.add(c.id));
+    extra = extra.filter(c => !ids.has(c.id) && !c.artist_assigned && !c.artist_tcgdex).sort(SORTS.release);
+  }
+  UI.search.results = results; UI.search.extra = extra; UI.search.artist = mode === 'artist' ? term : '';
+  UI.search.extraFilter = ''; $('#s-extra-filter').value = '';
+  const have = new Set(active()?.cardIds || []);
+  UI.search.sel = new Set(results.filter(c => !have.has(c.id) && !UI.search.noSel.has(c.id)).map(c => c.id));
+  UI.search.hideHave = false;
+  if (!offline) {
+    const nTd = [...UI.search.badges.values()].filter(v => v === 'via TCGdex').length, nDisp = td?.disputed.length || 0;
+    const parts = [];
+    if (mode === 'artist') parts.push(`${results.length - nTd - nDisp - [...UI.search.badges.values()].filter(v => v === 'set by you').length} credited by the Pokémon TCG API`);
+    if (nTd) parts.push(`${nTd} credited via TCGdex`);
+    if ([...UI.search.badges.values()].includes('set by you')) parts.push(`${[...UI.search.badges.values()].filter(v => v === 'set by you').length} set by you`);
+    if (nDisp) parts.push(`${nDisp} where the two databases disagree (not selected)`);
+    let msg = results.length ? (mode === 'artist' ? `Found ${results.length}: ${parts.join(' · ')}.` : `Found ${results.length} card${results.length === 1 ? '' : 's'}.`) + ' Tap to deselect any you don\'t want.' : 'No cards found. Check the spelling, or try Advanced query.';
+    if (td?.unmatched.length) msg += ` ${td.unmatched.length} TCGdex card(s) couldn't be matched: ${td.unmatched.slice(0, 5).join(', ')}${td.unmatched.length > 5 ? '…' : ''}.`;
+    if (tdError) msg += ` TCGdex unavailable (${tdError})${wantGaps ? '' : ' — tick "Also list every card with no artist credit" to find newer cards by eye'}.`;
+    if (extra.length) msg += ` + ${extra.length} uncredited to check (below).`;
+    status.textContent = msg;
+  }
+  if (!$('#s-newname').value || $('#s-newname').dataset.auto) { $('#s-newname').value = term; $('#s-newname').dataset.auto = '1'; }
+  renderResults();
+});
+$('#s-newname').addEventListener('input', e => delete e.target.dataset.auto);
+function renderResults() {
+  const { results, extra, sel, hideHave } = UI.search;
+  const target = $('input[name=s-target]:checked')?.value;
+  const have = new Set(target === 'current' ? (active()?.cardIds || []) : []);
+  const shown = hideHave ? results.filter(c => !have.has(c.id)) : results;
+  $('#s-tools').classList.toggle('hidden', !results.length && !extra.length);
+  const tile = c => `<button type="button" class="res${sel.has(c.id) ? ' sel' : ''}${have.has(c.id) ? ' have' : ''}" data-rid="${esc(c.id)}" aria-pressed="${sel.has(c.id)}" title="${esc(c.name)} · ${esc(c.set_name)} ${esc(c.number)}">
+    ${c.img_s ? `<img src="${esc(c.img_s)}" alt="" loading="lazy">` : `<span class="noimg">${esc(c.name)}</span>`}
+    ${have.has(c.id) ? '<span class="badge">In collection</span>' : UI.search.badges.has(c.id) ? `<span class="badge">${esc(UI.search.badges.get(c.id))}</span>` : ''}
+    <span class="cap"><b>${esc(c.name)}</b>${esc(c.set_name)} · ${esc(c.number)}</span></button>`;
+  $('#s-results').innerHTML = shown.map(tile).join('');
+  $('#s-extra').classList.toggle('hidden', !extra.length);
+  $('#s-jump').classList.toggle('hidden', !extra.length);
+  if (extra.length) {
+    const f = UI.search.extraFilter.toLowerCase().split(/\s+/).filter(Boolean);
+    const ex = extra.filter(c => (!hideHave || !have.has(c.id)) && f.every(t => `${c.name} ${c.set_name} ${c.set_id} ${c.number}`.toLowerCase().includes(t)));
+    const cap = 120;   // keep the DOM light; filter to narrow down
+    $('#s-extra-artist').textContent = UI.search.artist;
+    $('#s-extra-count').textContent = `${ex.length} of ${extra.length} uncredited cards${ex.length > cap ? ` — showing the first ${cap}, type a name to narrow down` : ''} · ${extra.filter(c => sel.has(c.id)).length} selected`;
+    $('#s-extra-results').innerHTML = ex.slice(0, cap).map(tile).join('');
+  }
+  const n = [...sel].filter(id => !have.has(id)).length;
+  $('#s-count').textContent = `${sel.size} selected`;
+  $('#s-add').textContent = `Add ${n} card${n === 1 ? '' : 's'}`;
+  $('#s-add').disabled = !n;
+}
+['#s-results','#s-extra-results'].forEach(sel => $(sel).addEventListener('click', e => {
+  const b = e.target.closest('[data-rid]'); if (!b) return;
+  const id = b.dataset.rid, s = UI.search.sel; s.has(id) ? s.delete(id) : s.add(id); renderResults();
+}));
+let exT;
+$('#s-extra-filter').addEventListener('input', e => { clearTimeout(exT); exT = setTimeout(() => { UI.search.extraFilter = e.target.value.trim(); renderResults(); }, 150); });
+$('#s-tools').addEventListener('click', e => {
+  const k = e.target.closest('[data-sel]')?.dataset.sel; if (!k) return;
+  const r = UI.search.results, have = new Set(active()?.cardIds || []);
+  if (k === 'all') UI.search.sel = new Set(r.filter(c => !have.has(c.id) && !UI.search.noSel.has(c.id)).map(c => c.id));
+  if (k === 'none') UI.search.sel = new Set();
+  if (k === 'pokemon') UI.search.sel = new Set([...UI.search.sel].filter(id => [...r, ...UI.search.extra].find(c => c.id === id)?.supertype === 'Pokémon'));
+  if (k === 'new') UI.search.hideHave = !UI.search.hideHave;
+  if (k === 'jump') { $('#s-extra').scrollIntoView({ behavior:'smooth', block:'start' }); $('#s-extra-filter').focus({ preventScroll:true }); return; }
+  renderResults();
+});
+$$('input[name=s-target]').forEach(r => r.addEventListener('change', () => { $('#s-newname').classList.toggle('hidden', r.value !== 'new' || !r.checked); renderResults(); }));
+$('#s-add').addEventListener('click', () => {
+  const extraIds = new Set(UI.search.extra.map(c => c.id));
+  const picked = [...UI.search.results, ...UI.search.extra].filter(c => UI.search.sel.has(c.id));
+  let col;
+  if ($('input[name=s-target]:checked').value === 'new') {
+    col = newCollection(uniqueName($('#s-newname').value.trim() || 'New collection'));
+    S.collections[col.id] = col; S.order.push(col.id); S.activeId = col.id;
+  } else col = active();
+  const have = new Set(col.cardIds); let n = 0;
+  let assigned = 0;
+  for (const c of picked) {
+    mergeCard(c);
+    if (extraIds.has(c.id) && UI.search.artist && !S.cards[c.id].artist) { S.cards[c.id].artist = UI.search.artist; S.cards[c.id].artist_assigned = true; assigned++; }
+    if (!have.has(c.id)) { col.cardIds.push(c.id); n++; }
+  }
+  col.updated = Date.now(); save();
+  $('#dlg-add').close(); UI.filters = { text:'', set:'all', status:'all', rarity:'all' }; render();
+  toast(`Added ${n} card${n === 1 ? '' : 's'} to "${col.name}"${assigned ? ` (${assigned} credited to ${UI.search.artist} by you)` : ''}`, 'success');
+});
+$('#dlg-add').addEventListener('close', () => UI.search.abort?.abort());
+
+/* ---------- custom card ---------- */
+function openCustom() {
+  if (!active()) { toast('Create a collection first', 'warn'); return; }
+  $('#form-custom').reset(); $('#dlg-custom').showModal();
+}
+$('#form-custom').addEventListener('submit', e => {
+  if (e.submitter?.value !== 'ok') return;
+  const v = id => $('#' + id).value.trim();
+  if (!v('cc-name')) { e.preventDefault(); return; }
+  const set = v('cc-set') || 'Custom';
+  const c = { id:'custom-' + uid(), name:v('cc-name'), number:v('cc-number'), set_id:'custom-' + slug(set), set_name:set, series:'Custom',
+    release_date:v('cc-date'), artist:v('cc-artist'), rarity:v('cc-rarity'), dex:null, supertype:'', img_s:v('cc-img'), img_l:v('cc-img'), custom:true };
+  S.cards[c.id] = c; const col = active(); col.cardIds.push(c.id); col.updated = Date.now();
+  save(); render(); toast(`Added custom card "${c.name}"`, 'success');
+});
+
+/* ==========================================================================
+   EXPORT / IMPORT
+   ========================================================================== */
+function exportFilters() {
+  return { set:$('#e-set').value, rarity:$('#e-rarity').value, status:$('#e-status').value, text:$('#e-text').checked ? UI.filters.text : '' };
+}
+function exportRows() {
+  const f = exportFilters(), ids = $('#e-scope').value === 'all' ? S.order : [S.activeId], rows = [];
+  for (const cid of ids) {
+    const col = S.collections[cid]; const L = cid === S.activeId ? UI.layout : computeLayout(col);
+    for (const c of L.cards) if (matches(c, col, f)) rows.push({ col, c, p:L.pos.get(c.id), own:!!col.owned[c.id] });
+  }
+  return rows;
+}
+function openExport() {
+  const col = active();
+  const cards = $('#e-scope').value === 'all' ? Object.values(S.cards) : (col ? UI.layout.cards : []);
+  const sets = new Map(); [...cards].sort(SORTS.release).forEach(c => sets.set(c.set_id, c.set_name));
+  $('#e-set').innerHTML = `<option value="all">All sets</option>` + [...sets].map(([id, n]) => `<option value="${esc(id)}">${esc(n)}</option>`).join('');
+  $('#e-rarity').innerHTML = `<option value="all">All rarities</option>` + [...new Set(cards.map(c => c.rarity || '—'))].sort().map(r => `<option>${esc(r)}</option>`).join('');
+  if (!$('#dlg-export').open) {   // first open: prefill from on-screen filters
+    $('#e-set').value = sets.has(UI.filters.set) ? UI.filters.set : 'all';
+    $('#e-rarity').value = UI.filters.rarity; if (!$('#e-rarity').value) $('#e-rarity').value = 'all';
+    $('#e-status').value = UI.filters.status;
+    $('#e-text').checked = !!UI.filters.text;
+    $('#e-text-val').textContent = UI.filters.text;
+    $('#e-text').closest('label').classList.toggle('hidden', !UI.filters.text);
+    $('#e-scope').disabled = !col; $('#e-go').disabled = !col;
+    $('#dlg-export').showModal();
+  }
+  updateExportCount();
+}
+function updateExportCount() {
+  if (!active()) { $('#e-count').textContent = 'Nothing to export yet — you can still restore a backup below.'; return; }
+  const rows = exportRows(), own = rows.filter(r => r.own).length;
+  $('#e-count').textContent = `${rows.length} card${rows.length === 1 ? '' : 's'} selected (${own} owned, ${rows.length - own} needed).`;
+  const fmt = $('input[name=e-fmt]:checked').value;
+  $('#e-copy').classList.toggle('hidden', fmt !== 'txt');
+  $('#e-go').disabled = !rows.length;
+}
+['e-set','e-rarity','e-status','e-text'].forEach(id => $('#' + id).addEventListener('change', updateExportCount));
+$('#e-scope').addEventListener('change', openExport);
+$$('input[name=e-fmt]').forEach(r => r.addEventListener('change', updateExportCount));
+
+const csvCell = v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
+function buildCsv(rows) {
+  const head = ['collection','binder_page','binder_slot','spread','side','owned','name','number','set_name','set_id','series','release_date','rarity','artist','artist_source','pokedex','card_id','price_gbp','price_native','price_currency','price_source','price_metric','price_date','fx_gbp_per_unit','fx_source','price_fetched'];
+  const lines = rows.map(({ col, c, p, own }) => { const s = p ? spreadOf(p.page, col.startRight) : {};
+    return [col.name, p?.page, p?.slot, s.spread, s.side, own ? 'Y' : 'N', c.name, c.number, c.set_name, c.set_id, c.series, c.release_date, c.rarity, c.artist, artistSource(c), c.dex, c.id, ...priceCols(c)].map(csvCell).join(','); });
+  return '\uFEFF' + [head.join(','), ...lines].join('\r\n');   // BOM so Excel reads é correctly
+}
+function priceCols(c) {
+  const pi = priceOf(c); if (!pi) return ['', '', '', '', '', '', '', '', ''];
+  const r = fxRate(pi.cur);
+  return [pi.gbp != null ? pi.gbp.toFixed(2) : '', pi.native.toFixed(2), pi.cur, pi.src, pi.metric, pi.date, r ? r.toFixed(6) : '',
+    parseFloat(S.settings.fx?.[pi.cur]) > 0 ? 'manual' : (S.fx ? `ECB ${S.fx.date}` : ''), (pi.fetched || '').slice(0, 10)];
+}
+function buildText(rows) {
+  const f = exportFilters(), label = f.status === 'needed' ? 'Want list' : f.status === 'owned' ? 'Owned' : 'Checklist';
+  let out = '', curCol = null, curSet = null;
+  for (const { col, c, own } of rows) {
+    if (col !== curCol) { const n = rows.filter(r => r.col === col).length; out += `${out ? '\n' : ''}${col.name} — ${label} (${n})\n${'='.repeat(Math.min(60, col.name.length + label.length + 10))}\n`; curCol = col; curSet = null; }
+    if (c.set_id !== curSet) { out += `\n${c.set_name}${c.release_date ? ` (${c.release_date.slice(0,4)})` : ''}\n`; curSet = c.set_id; }
+    const pi = priceOf(c);
+    out += `  ${own ? '[x]' : '[ ]'} ${c.number ? c.number.padEnd(7) : ''} ${c.name}${c.rarity ? ' · ' + c.rarity : ''}${pi ? ' · ' + fmtPrice(pi) : ''}\n`;
+  }
+  const v = sumValue(rows.map(r => r.c));
+  if (v.priced) out += `\nTotal ≈ ${GBP.format(v.gbp)} for ${v.priced} priced card(s). ${(S.settings.priceSource || CONFIG.priceSource) === 'tcgplayer' ? 'TCGplayer' : 'Cardmarket'} prices, price dates ${dateRange(v)}; converted to GBP at ${S.fx ? 'ECB rate of ' + S.fx.date : 'your rate'}.\n`;
+  return out + `\nExported ${today()} from PokéBinder Studio\n`;
+}
+function download(name, content, type) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const a = Object.assign(document.createElement('a'), { href:url, download:name }); document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+const fileSafe = s => String(s).replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_|_$/g, '').slice(0, 60) || 'export';
+function exportName(ext) {
+  const f = exportFilters(), base = $('#e-scope').value === 'all' ? 'All_collections' : fileSafe(active().name);
+  const parts = [base, f.status !== 'all' ? f.status : '', f.set !== 'all' ? fileSafe(f.set) : '', today()].filter(Boolean);
+  return parts.join('_') + '.' + ext;
+}
+$('#e-go').addEventListener('click', () => {
+  const rows = exportRows(); if (!rows.length) return;
+  const fmt = $('input[name=e-fmt]:checked').value;
+  if (fmt === 'csv') download(exportName('csv'), buildCsv(rows), 'text/csv;charset=utf-8');
+  else if (fmt === 'txt') download(exportName('txt'), buildText(rows), 'text/plain;charset=utf-8');
+  else download(exportName('json'), JSON.stringify(rows.map(({ col, c, p, own }) => ({ collection:col.name, binder_page:p?.page ?? null, binder_slot:p?.slot ?? null, owned:own, ...c })), null, 2), 'application/json');
+  toast(`Exported ${rows.length} cards`, 'success');
+});
+$('#e-copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(buildText(exportRows())); toast('Copied to clipboard', 'success'); }
+  catch { toast('Clipboard not available — use Download instead', 'error'); }
+});
+$('#e-backup').addEventListener('click', () => {
+  download(`PokeBinder_backup_${today()}.json`, JSON.stringify({ app:'PokeBinderStudio', exported:new Date().toISOString(), state:S }), 'application/json');
+  S.settings.lastBackup = Date.now(); save(); toast('Backup downloaded', 'success');
+});
+$('#e-restore-file').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+  let incoming;
+  try {
+    const j = JSON.parse(await file.text());
+    incoming = j.app === 'PokeBinderStudio' ? j.state : null;
+    if (!incoming?.collections || !incoming?.cards) throw new Error('not a PokéBinder backup');
+  } catch (err) { toast('Restore failed: ' + err.message, 'error'); return; }
+  const mode = $('#e-restore-mode').value, nCols = Object.keys(incoming.collections).length;
+  if (mode === 'replace') {
+    if (!await confirmDlg('Replace everything?', `All current collections will be replaced with the ${nCols} in this backup. Download a backup first if unsure.`, 'Replace')) return;
+    S = { ...blankState(), ...incoming, settings:{ ...blankState().settings, ...incoming.settings, apiKey:S.settings.apiKey } };
+  } else {
+    Object.assign(S.cards, incoming.cards);
+    // Same collection (same id, e.g. backup from your other device) → union of cards and owned ticks.
+    // Different collection → added alongside, renamed if the name clashes.
+    for (const id of (incoming.order || Object.keys(incoming.collections))) {
+      const c = structuredClone(incoming.collections[id]); if (!c) continue;
+      const mine = S.collections[c.id];
+      if (mine) {
+        const have = new Set(mine.cardIds); c.cardIds.forEach(x => { if (!have.has(x)) mine.cardIds.push(x); });
+        Object.assign(mine.owned, c.owned); mine.updated = Date.now();
+      } else { c.name = uniqueName(c.name); S.collections[c.id] = c; S.order.push(c.id); }
+    }
+    S.activeId ||= S.order[0];
+  }
+  await flush(); $('#dlg-export').close(); render(); toast(`Restored ${nCols} collection${nCols === 1 ? '' : 's'}`, 'success');
+});
+
+/* ==========================================================================
+   PRINT
+   ========================================================================== */
+function openPrint() {
+  if (!active()?.cardIds.length) { toast('Nothing to print yet', 'warn'); return; }
+  const fa = filtersActive();
+  $('#p-filters').checked = fa; $('#p-filters').disabled = !fa;
+  $('#p-filter-desc').textContent = fa ? `(${describeFilters()})` : '(none set)';
+  syncPrintOptions(); $('#dlg-print').showModal();
+}
+function describeFilters() {
+  const f = UI.filters, b = [];
+  if (f.set !== 'all') b.push(S.cards[active().cardIds.find(id => S.cards[id]?.set_id === f.set)]?.set_name || f.set);
+  if (f.status !== 'all') b.push(f.status); if (f.rarity !== 'all') b.push(f.rarity); if (f.text) b.push(`"${f.text}"`);
+  return b.join(', ');
+}
+function syncPrintOptions() {
+  const t = $('input[name=p-type]:checked').value;
+  $('#p-needed-wrap').classList.toggle('hidden', t === 'guide');
+  $('#p-img-wrap').classList.toggle('hidden', t !== 'placeholders');
+  if (t === 'placeholders' && !$('#p-needed').dataset.touched) $('#p-needed').checked = true;
+}
+$$('input[name=p-type]').forEach(r => r.addEventListener('change', syncPrintOptions));
+$('#p-needed').addEventListener('change', e => e.target.dataset.touched = '1');
+$('#p-go').addEventListener('click', async () => {
+  const col = active(), L = UI.layout, type = $('input[name=p-type]:checked').value;
+  const useF = $('#p-filters').checked, onlyNeeded = $('#p-needed').checked && type !== 'guide';
+  const keep = c => (!useF || matches(c, col)) && (!onlyNeeded || !col.owned[c.id]);
+  const root = $('#print-root');
+  const own = L.cards.filter(c => col.owned[c.id]).length;
+  const head = (title) => `<div class="p-head"><div><h1>${esc(col.name)}</h1><div>${esc(title)}${useF ? ' · filtered: ' + esc(describeFilters()) : ''}</div></div>
+    <div class="m">${L.cols * L.rows}-pocket · ${L.pages.length} pages · ${own}/${L.cards.length} owned<br>Printed ${today()}</div></div>`;
+
+  if (type === 'guide') {
+    const pages = L.pages.map((p, i) => ({ p, no:i + 1 })).filter(({ p }) => !useF || p.some(c => c && keep(c)));
+    root.innerHTML = head('Binder guide') + `<div class="g-pages">${pages.map(({ p, no }) => { const sp = spreadOf(no, col.startRight);
+      return `<div class="g-page"><h2>Page ${no}<span>spread ${sp.spread} · ${sp.side} · ${p.filter(c => c && col.owned[c.id]).length}/${p.filter(Boolean).length}</span></h2>
+      <div class="g-grid" style="--cols:${L.cols}">${p.map((c, si) => !c ? `<div class="g-cell empty"><span class="n">${si + 1}</span></div>` :
+        `<div class="g-cell${col.owned[c.id] ? ' own' : ''}"><span class="s">${col.owned[c.id] ? '✓' : ''}</span><b>${esc(c.name)}</b>${esc(c.number)}<br>${esc(c.set_name)}<span class="n">${si + 1}</span></div>`).join('')}</div></div>`; }).join('')}</div>
+      <div class="p-foot">Slots are numbered left→right, top→bottom. Shaded = owned.</div>`;
+  } else if (type === 'placeholders') {
+    const list = L.cards.filter(keep), img = $('#p-img').checked, sheets = [];
+    for (let i = 0; i < list.length; i += 9) sheets.push(list.slice(i, i + 9));
+    root.innerHTML = sheets.map(sh => `<div class="ph-sheet">${sh.map(c => { const p = L.pos.get(c.id);
+      return `<div class="ph"><span class="need">${col.owned[c.id] ? 'OWNED' : 'NEEDED'}</span><div class="t">${esc(c.name)}</div>
+        <div class="s">${esc(c.set_name)} · <b>${esc(c.number)}</b>${c.rarity ? '<br>' + esc(c.rarity) : ''}</div>
+        ${img && c.img_s ? `<div class="img"><img src="${esc(c.img_l || c.img_s)}" alt=""></div>` : `<div class="img none">?</div>`}
+        <div class="b"><span>${p ? `Page ${p.page} · slot ${p.slot}` : ''}</span><span>${esc(c.release_date || '')}</span></div></div>`; }).join('')}</div>`).join('');
+    if (!list.length) root.innerHTML = '<p>No cards to print.</p>';
+  } else {
+    const list = L.cards.filter(keep), groups = new Map();
+    [...list].sort(SORTS.release).forEach(c => { if (!groups.has(c.set_id)) groups.set(c.set_id, []); groups.get(c.set_id).push(c); });
+    root.innerHTML = head(onlyNeeded ? 'Want list' : 'Checklist') + `<div class="c-cols">${[...groups.values()].map(g =>
+      `<div class="c-set"><h2>${esc(g[0].set_name)}<span>${g.filter(c => col.owned[c.id]).length}/${g.length}</span></h2>${g.sort((a, b) => cmpNum(a.number, b.number)).map(c => { const p = L.pos.get(c.id);
+        return `<div class="c-row"><span class="c-box">${col.owned[c.id] ? '✓' : ''}</span><span class="mono">${esc(c.number)}</span><span>${esc(c.name)} <span class="r">${esc(c.rarity || '')}</span></span><span class="r">${p ? `p${p.page}·${p.slot}` : ''}${priceOf(c) ? ' · ' + fmtPrice(priceOf(c)) : ''}</span></div>`; }).join('')}</div>`).join('')}</div>
+      ${(v => v.priced ? `<div class="p-foot">Value of listed cards ≈ ${GBP.format(v.gbp)} (${v.priced} priced). Price dates ${esc(dateRange(v))}; GBP conversion ${S.fx ? 'ECB ' + esc(S.fx.date) : 'manual rate'}.</div>` : '')(sumValue(list))}`;
+  }
+  $('#dlg-print').close();
+  // wait for images (max 8s) so placeholders don't print blank
+  const imgs = $$('img', root);
+  if (imgs.length) {
+    toast(`Loading ${imgs.length} images for print…`, 'info');
+    await Promise.race([Promise.all(imgs.map(i => i.complete ? 0 : new Promise(r => { i.onload = i.onerror = r; }))), sleep(8000)]);
+  }
+  window.print();
+});
+window.addEventListener('afterprint', () => { $('#print-root').innerHTML = ''; });
+
+/* ==========================================================================
+   SETTINGS
+   ========================================================================== */
+async function openSettings() {
+  $('#st-psrc').value = S.settings.priceSource || CONFIG.priceSource;
+  $('#st-fx-eur').value = S.settings.fx?.EUR || ''; $('#st-fx-usd').value = S.settings.fx?.USD || '';
+  $('#st-fx-status').textContent = S.fx ? `Auto rate: €1 = £${S.fx.eur.toFixed(4)}, $1 = £${S.fx.usd.toFixed(4)} (ECB reference rate for ${S.fx.date}, checked ${new Date(S.fx.fetchedAt).toLocaleString('en-GB')}). An override, if set, wins.` : 'No exchange rate fetched yet.';
+  $('#st-key').value = S.settings.apiKey || ''; $('#st-gaps').value = gapSets().join(', '); $('#st-tcgdex').checked = S.settings.tcgdex !== false; $('#st-ver').textContent = 'v' + CONFIG.version;
+  $('#dlg-settings').showModal();
+  const used = Object.keys(S.cards).length, inUse = new Set(S.order.flatMap(id => S.collections[id].cardIds));
+  let est = '';
+  try { const e = await navigator.storage?.estimate?.(); if (e) est = ` · ~${(e.usage / 1048576).toFixed(1)} MB used`; } catch {}
+  let persisted = false; try { persisted = await navigator.storage?.persisted?.(); } catch {}
+  const lb = S.settings.lastBackup ? new Date(S.settings.lastBackup).toLocaleDateString('en-GB') : 'never';
+  $('#st-usage').innerHTML = `${S.order.length} collection(s) · ${used} cached card(s), ${used - [...inUse].filter(id => S.cards[id]).length} unused${est}<br>
+    Storage: ${Store.db ? 'IndexedDB' : 'localStorage (fallback)'} · ${persisted ? 'protected from automatic clean-up' : 'may be cleared by the browser if space is low'} · last backup: ${lb}`;
+}
+$('#st-key').addEventListener('change', e => { S.settings.apiKey = e.target.value.trim(); S.setsCache = null; save(); toast('API key saved', 'success'); });
+$('#st-psrc').addEventListener('change', e => { S.settings.priceSource = e.target.value; save(); render(); });
+['EUR','USD'].forEach(cur => $('#st-fx-' + cur.toLowerCase()).addEventListener('change', e => {
+  const v = parseFloat(e.target.value); S.settings.fx = { ...S.settings.fx, [cur]:v > 0 ? String(v) : '' }; save(); render();
+  toast(v > 0 ? `Using your rate: £${v} per ${cur === 'EUR' ? '€' : '$'}1` : 'Back to the automatic ECB rate', 'success');
+}));
+$('#st-fx-refresh').addEventListener('click', async () => { await loadFx(true); openSettings(); });
+$('#st-tcgdex').addEventListener('change', e => { S.settings.tcgdex = e.target.checked; save(); toast(`TCGdex artist credits ${e.target.checked ? 'on' : 'off'}`, 'success'); });
+$('#st-gaps').addEventListener('change', e => { S.settings.uncreditedSets = e.target.value.trim(); S.gapCache = null; save(); $('#st-gaps').value = gapSets().join(', '); toast('Uncredited set list saved', 'success'); });
+$('#st-key-show').addEventListener('click', e => { const i = $('#st-key'); i.type = i.type === 'password' ? 'text' : 'password'; e.target.textContent = i.type === 'password' ? 'Show' : 'Hide'; });
+$('#st-persist').addEventListener('click', async () => {
+  const ok = await navigator.storage?.persist?.().catch(() => false);
+  toast(ok ? 'Browser will keep your data' : 'Browser declined — install the app or back up regularly', ok ? 'success' : 'warn'); openSettings();
+});
+$('#st-prune').addEventListener('click', () => {
+  const inUse = new Set(S.order.flatMap(id => S.collections[id].cardIds)); let n = 0;
+  for (const id of Object.keys(S.cards)) if (!inUse.has(id)) { delete S.cards[id]; n++; }
+  save(); toast(`Removed ${n} unused card(s)`, 'success'); openSettings();
+});
+$('#st-reset').addEventListener('click', async () => {
+  if (!await confirmDlg('Reset everything?', 'Deletes all collections, owned ticks and cached cards on this device. This cannot be undone.', 'Delete all')) return;
+  S = blankState(); await flush(); $('#dlg-settings').close(); render(); toast('All data cleared', 'info');
+});
+
+/* ==========================================================================
+   TOASTS
+   ========================================================================== */
+function toast(msg, type = 'info', action) {
+  const el = document.createElement('div'); el.className = `toast ${type}`; el.setAttribute('role', 'status');
+  el.innerHTML = `<span>${esc(msg)}</span>`;
+  if (action) { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = action.label; b.onclick = () => { action.fn(); el.remove(); }; el.append(b); }
+  $('#toasts').append(el);
+  setTimeout(() => el.remove(), action ? CONFIG.undoMs : 3500);
+}
+
+/* ==========================================================================
+   GLOBAL EVENT WIRING (delegated — no inline handlers, no IDs in JS strings)
+   ========================================================================== */
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-act],[data-view],[data-close]'); if (!t) return;
+  if (t.hasAttribute('data-close')) { t.closest('dialog').close(); return; }
+  if (t.dataset.view) { UI.view = S.settings.view = t.dataset.view; save(); renderHeader(active()); renderView(); return; }
+  const id = t.closest('[data-id]')?.dataset.id;
+  switch (t.dataset.act) {
+    case 'toggle': toggleOwned(id); break;
+    case 'info': e.stopPropagation(); openInfo(id); break;
+    case 'new-col': openColDialog('new'); break;
+    case 'edit-col': openColDialog('edit'); break;
+    case 'add-cards': openAdd(); break;
+    case 'custom-card': openCustom(); break;
+    case 'export': openExport(); break;
+    case 'print': openPrint(); break;
+    case 'settings': openSettings(); break;
+    case 'clear-filters': UI.filters = { text:'', set:'all', status:'all', rarity:'all' }; render(); break;
+    case 'goto-set': UI.filters.set = t.dataset.set; UI.view = 'list'; render(); break;
+    case 'refresh-prices': refreshPrices(); break;
+    case 'sort-value': e.stopPropagation(); UI.listSort = UI.listSort === 'value' ? 'binder' : 'value'; renderView(); break;
+    case 'refresh-one': (async () => { const id = UI.infoId;
+      try { const [c] = await apiFetchAll(`id:"${id}"`); if (c) { mergeCard(c); save(); } await loadFx(); openInfo(id); renderProgress(); toast(c?.price ? 'Price updated' : 'Still no price for this card', c?.price ? 'success' : 'warn'); }
+      catch (err) { toast('Refresh failed: ' + err.message, 'error'); } })(); break;
+    case 'bulk-own': case 'bulk-need': {
+      const col = active(), ids = UI.layout.cards.filter(c => matches(c, col)).map(c => c.id), snap = snapshot();
+      setOwned(ids, t.dataset.act === 'bulk-own'); render(); undoable(`Marked ${ids.length} as ${t.dataset.act === 'bulk-own' ? 'owned' : 'needed'}`, snap); break;
+    }
+  }
+});
+// keyboard toggle for role=button pockets
+$('#view').addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.pocket[data-id]')) { e.preventDefault(); toggleOwned(e.target.dataset.id); }
+  if (e.key === 'i' && e.target.matches('[data-id]')) openInfo(e.target.dataset.id);
+});
+$('#col-select').addEventListener('change', e => switchCollection(e.target.value));
+let textT;
+$('#f-text').addEventListener('input', e => { clearTimeout(textT); textT = setTimeout(() => { UI.filters.text = e.target.value.trim(); renderProgress(); renderView(); }, 180); });
+['set','status','rarity'].forEach(k => $('#f-' + k).addEventListener('change', e => { UI.filters[k] = e.target.value; renderProgress(); renderView(); }));
+// light-dismiss dialogs on backdrop click
+$$('dialog').forEach(d => d.addEventListener('click', e => { if (e.target === d && d.id !== 'dlg-confirm') d.close(); }));
+
+/* ---------- PWA ---------- */
+let installEvt;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; $('#install-btn').classList.remove('hidden'); });
+$('#install-btn').addEventListener('click', async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; $('#install-btn').classList.add('hidden'); });
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW registration failed', err));
+
+/* ---------- boot ---------- */
+(async function boot() {
+  await Store.open();
+  S = await Store.get(CONFIG.storageKey);
+  if (!S) {
+    S = migrateV1();
+    if (S) { await flush(); setTimeout(() => toast(`Imported ${S.order.length} collection(s) from the previous version`, 'success'), 300); }
+    else S = blankState();
+  }
+  S = { ...blankState(), ...S, settings:{ ...blankState().settings, ...S.settings } };
+  if (!S.collections[S.activeId]) S.activeId = S.order[0] || null;
+  UI.view = S.settings.view || 'binder';
+  render();
+  loadFx();   // non-blocking; prices render in EUR/USD until a rate is available
+  // gentle backup nudge: >50 owned ticks and no backup in 30 days
+  const ticks = S.order.reduce((n, id) => n + Object.keys(S.collections[id].owned).length, 0);
+  if (ticks > 50 && (!S.settings.lastBackup || Date.now() - S.settings.lastBackup > 30 * 864e5))
+    setTimeout(() => toast('Your collection only lives in this browser — download a backup', 'warn', { label:'Back up', fn:openExport }), 1500);
+})();
+</script>
+</body>
+</html>
