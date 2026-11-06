@@ -1,4 +1,4 @@
-# PokéBinder Studio v2.4.1
+# PokéBinder Studio v2.5
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -24,6 +24,12 @@ Put all the files in one folder on any static host, and keep `app.js` next to `i
 4. **Collection settings** (pencil icon): set the pocket layout (4, 9, 12 or 16), the binder order (release date, Pokédex number, set, name) and whether each set starts on a new page. Tick **Master set** to give every printing its own pocket. The app works out which printings exist from the price data and fetches it if needed.
 5. **Overview**: a chart of collection value over time (one point per day from the prices you've fetched), plus completion and cost to complete for each set.
 6. **Trades**: your spares with their values, **Share trade list** and **Share want list** links, and a trade calculator. Add what you'd give (from your spares) and what you'd get (search by name or printed code) to see who comes out ahead at current GBP prices. **Apply** updates your quantities, with undo.
+6a. **Price stickers** (Trades → Price stickers, or Print → Price stickers):
+   - **Cards:** pick your spares, the cards in the calculator's "You give" list, or whatever's in the current view. You get one sticker per spare copy, or one per card.
+   - **Pricing:** prices start at the GBP market price. You can apply a % of market, rounding (10p, 50p, £1 or .99) and a minimum price. Type a price on any row to override it, and the app remembers it.
+   - **What's on each sticker:** card name, printing (e.g. a REVERSE HOLO tag), set code and number, the price, plus your stall name and logo if you set them. Logos are converted to black and white.
+   - **A4 sticker sheets:** Avery L7160, L7159, L7163 or L7651. Print from your device at A4, 100% scale. You can start part-way down a used sheet (the app remembers where you stopped) and nudge the layout in mm to line it up. **Do a test print on plain paper first.**
+   - **Bluetooth label printers** (NIIMBOT, Phomemo…): iPhones don't let websites connect to Bluetooth printers, so the app makes one black-and-white PNG per sticker at 203 dpi in your label size (50×30 mm, 40×30, 40×20, 30×15, 60×40 or custom). Tap **Share images** → Save Images, then print them from the printer's app.
 7. **Filters** (set, status including **Spares**, rarity, text) apply to every view, and you can carry them into export and print.
 8. **Print**: binder guide (a pocket map with tick boxes), placeholder cards (true 63 × 88 mm, 9 per A4, print at 100% scale) or a checklist.
 9. **Export and share**: a **share link** (a read-only page anyone can open, with your list packed into the link itself so nothing is uploaded), a CSV with page, slot, printing, quantity, spares, condition, paid and price columns, a text list, or JSON. **Full backup and restore** is how you move data between devices. A merge combines matching collections.

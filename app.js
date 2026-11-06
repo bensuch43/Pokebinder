@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '2.4.1',
+  version: '2.5.0',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 4,           // for 429 / 5xx, exponential back-off
@@ -25,7 +25,17 @@ const CONFIG = {
   priceStaleDays: 14,              // flag prices whose source date is older than this
   priceBatch: 60,                  // card IDs per API call when refreshing prices
   fxUrl: 'https://api.frankfurter.dev/v1/latest?base=EUR&symbols=GBP,USD',   // ECB rates, no key
-  fxCacheHours: 12
+  fxCacheHours: 12,
+  /* Price-sticker sheets. Sizes/margins from Avery UK's published A4 templates — always do one test print
+     on plain paper and hold it against a sheet; use the nudge boxes if your printer shifts things. */
+  labelSheets: {
+    L7160:{ name:'Avery L7160 / J8160 — 21 per sheet (63.5 × 38.1 mm)', cols:3, rows:7, w:63.5, h:38.1, top:15.15, left:7.25, px:66.04, py:38.1 },
+    L7159:{ name:'Avery L7159 / J8159 — 24 per sheet (63.5 × 33.9 mm)', cols:3, rows:8, w:63.5, h:33.9, top:12.9, left:7.25, px:66.04, py:33.9 },
+    L7163:{ name:'Avery L7163 / J8163 — 14 per sheet (99.1 × 38.1 mm)', cols:2, rows:7, w:99.1, h:38.1, top:15.15, left:4.65, px:101.6, py:38.1 },
+    L7651:{ name:'Avery L7651 / J8651 — 65 per sheet (38.1 × 21.2 mm)', cols:5, rows:13, w:38.1, h:21.2, top:10.7, left:4.75, px:40.64, py:21.2 }
+  },
+  thermalSizes: { '50x30':'50 × 30 mm', '40x30':'40 × 30 mm', '40x20':'40 × 20 mm', '30x15':'30 × 15 mm', '60x40':'60 × 40 mm', 'custom':'Custom size' },
+  thermalDpi: 203
 };
 /* TCGdex set ID → Pokémon TCG API set ID. Generated 2026-11-06 by matching set names (and release dates)
    across both open datasets; checked against all 212 physical Yuka Morii cards (100% matched).
@@ -1296,7 +1306,9 @@ function sanitizeState(st) {
   }
   for (const id of (Array.isArray(st.order) ? st.order : [])) if (collections[id] && !order.includes(id)) order.push(id);
   Object.keys(collections).forEach(id => { if (!order.includes(id)) order.push(id); });
-  return { cards, collections, order, activeId:collections[st.activeId] ? st.activeId : order[0] || null };
+  const labelPrices = {};
+  for (const [k, v] of Object.entries(st.labelPrices || {})) if (/^[A-Za-z0-9._-]{1,60}\|[a-z]*$/.test(k) && v > 0 && v < 1e5) labelPrices[k] = Math.round(v * 100) / 100;
+  return { cards, collections, order, labelPrices, activeId:collections[st.activeId] ? st.activeId : order[0] || null };
 }
 $('#e-restore-file').addEventListener('change', async e => {
   const file = e.target.files[0]; e.target.value = ''; if (!file) return;
@@ -1326,6 +1338,7 @@ $('#e-restore-file').addEventListener('change', async e => {
       } else { c.name = uniqueName(c.name); S.collections[c.id] = c; S.order.push(c.id); }
     }
     S.activeId ||= S.order[0];
+    S.labelPrices = { ...incoming.labelPrices, ...S.labelPrices };
   }
   await flush(); $('#dlg-export').close(); render(); toast(`Restored ${nCols} collection${nCols === 1 ? '' : 's'}`, 'success');
 });
@@ -1348,13 +1361,16 @@ function describeFilters() {
 }
 function syncPrintOptions() {
   const t = $('input[name=p-type]:checked').value;
-  $('#p-needed-wrap').classList.toggle('hidden', t === 'guide');
+  $('#p-needed-wrap').classList.toggle('hidden', t === 'guide' || t === 'labels');
+  $('#p-filters').closest('label').classList.toggle('hidden', t === 'labels');
+  $('#p-go').innerHTML = t === 'labels' ? `${ic('sticker', 'sm')}Set up stickers` : `${ic('printer', 'sm')}Print`;
   $('#p-img-wrap').classList.toggle('hidden', t !== 'placeholders');
   if (t === 'placeholders' && !$('#p-needed').dataset.touched) $('#p-needed').checked = true;
 }
 $$('input[name=p-type]').forEach(r => r.addEventListener('change', syncPrintOptions));
 $('#p-needed').addEventListener('change', e => e.target.dataset.touched = '1');
 $('#p-go').addEventListener('click', async () => {
+  if ($('input[name=p-type]:checked').value === 'labels') { $('#dlg-print').close(); openLabels(); return; }
   const col = active(), L = UI.layout, type = $('input[name=p-type]:checked').value;
   const useF = $('#p-filters').checked, onlyNeeded = $('#p-needed').checked && type !== 'guide';
   const keep = c => (!useF || matches(c, col)) && (!onlyNeeded || !col.owned[c.id]);
@@ -1582,7 +1598,7 @@ function tradeHtml(col) {
     <section class="panel">
       <div class="row" style="justify-content:space-between;align-items:flex-start"><div><h2>Your spares</h2>
         <p class="muted small" style="margin:0">${spares.length ? `${spares.reduce((n, s) => n + s.n, 0)} spare copies worth about <b class="price">${GBP.format(spareVal)}</b>. Log extra copies in each card's details.` : 'No spares yet. Set quantities above 1 in a card’s details (tap the ⓘ on a pocket) and they appear here.'}</p></div>
-        <div class="row"><button class="btn sm" data-act="share-trade"${spares.length ? '' : ' disabled'}>${ic('share', 'sm')}Share trade list</button><button class="btn sm" data-act="share-want"${need ? '' : ' disabled'}>${ic('share', 'sm')}Share want list (${need})</button></div></div>
+        <div class="row"><button class="btn sm" data-act="labels">${ic('sticker', 'sm')}Price stickers</button><button class="btn sm" data-act="share-trade"${spares.length ? '' : ' disabled'}>${ic('share', 'sm')}Share trade list</button><button class="btn sm" data-act="share-want"${need ? '' : ' disabled'}>${ic('share', 'sm')}Share want list (${need})</button></div></div>
       ${spares.length ? `<div class="tlist">${spares.slice(0, 200).map(s => { const img = safeUrl(s.c.img_s), pi = priceOf(s.c, s.v);
         return `<div class="titem">${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : '<span class="ph"></span>'}
           <div class="t"><b>${esc(s.c.name)}</b><span>${esc(s.c.number)} · ${esc(s.c.set_name)} · ${VARIANTS[s.v]}</span></div>
@@ -1649,6 +1665,229 @@ document.addEventListener('change', e => {
   it.v = e.target.value; save(); renderView();
 });
 
+
+/* ==========================================================================
+   PRICE STICKERS — A4 label sheets (AirPrint) or images for Bluetooth label printers.
+   iPhones can't talk to Bluetooth printers from a web app, so thermal output is images
+   you share into the printer's own app.
+   ========================================================================== */
+const LBL_DEFAULTS = { src:'spare', copies:'copy', pct:100, round:0, min:0, stall:'', logo:'', fmt:'sheet', tpl:'L7160', start:1, dx:0, dy:0, size:'50x30', w:50, h:30 };
+const L = () => { if (!S.settings.labels?.fmt) S.settings.labels = { ...LBL_DEFAULTS, ...S.settings.labels }; return S.settings.labels; };   // one stable object
+UI.labels = { items:[], logoImg:null };
+const lblKey = it => `${it.id}|${it.v || ''}`;
+function labelSource(src) {
+  const col = active(); if (!col) return [];
+  const out = [];
+  if (src === 'give') S.trade.give.forEach(t => out.push({ id:t.id, v:t.v, n:t.q }));
+  else if (src === 'filter') UI.layout.cards.filter(e => matches(e, col)).forEach(e => out.push({ id:e.cardId, v:e.variant || primaryVariant(S.cards[e.cardId] || e, col), n:1 }));
+  else for (const id of col.cardIds) { const c = S.cards[id]; if (!c) continue; const by = {};
+    for (const sp of sparesOf(col, c)) { const v = sp.v === 'any' ? primaryVariant(c, col) : sp.v; by[v] = (by[v] || 0) + sp.n; }
+    Object.entries(by).forEach(([v, n]) => out.push({ id, v, n })); }
+  return out.filter(it => S.cards[it.id]);
+}
+function rulePrice(it) {
+  const o = L(), m = priceOf(S.cards[it.id], it.v)?.gbp;
+  if (m == null) return null;
+  let x = m * (+o.pct || 100) / 100;
+  const step = +o.round;
+  if (step === 99) x = Math.max(0.99, Math.ceil(x) - 0.01);
+  else if (step > 0) x = Math.max(step, Math.round(x / step) * step);
+  if (+o.min > 0) x = Math.max(x, +o.min);
+  return Math.round(x * 100) / 100;
+}
+const labelPrice = it => { const ov = S.labelPrices?.[lblKey(it)]; return ov > 0 ? ov : rulePrice(it); };
+function openLabels(src) {
+  const o = L(); if (src) o.src = src;
+  if (!active()) { toast('Create a collection first', 'warn'); return; }
+  $('#lb-src').value = o.src; $('#lb-copies').value = o.copies; $('#lb-pct').value = o.pct == 100 ? '' : o.pct; $('#lb-round').value = String(o.round);
+  $('#lb-min').value = o.min || ''; $('#lb-stall').value = o.stall; $('#lb-start').value = o.start > 1 ? o.start : ''; $('#lb-dx').value = o.dx || ''; $('#lb-dy').value = o.dy || '';
+  $('#lb-tpl').innerHTML = Object.entries(CONFIG.labelSheets).map(([k, t]) => `<option value="${k}"${k === o.tpl ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
+  $('#lb-size').innerHTML = Object.entries(CONFIG.thermalSizes).map(([k, t]) => `<option value="${k}"${k === o.size ? ' selected' : ''}>${esc(t)}</option>`).join('');
+  $$('input[name=lb-fmt]').forEach(x => x.checked = x.value === o.fmt);
+  loadLogo().then(() => { buildLabelItems(); syncLabelForm(); });
+  $('#dlg-labels').showModal();
+}
+function buildLabelItems() {
+  const o = L(), prev = new Map(UI.labels.items.map(it => [lblKey(it), it.on]));
+  UI.labels.items = labelSource(o.src).map(it => ({ ...it, n:o.copies === 'one' ? 1 : it.n, on:prev.get(lblKey(it)) ?? true }));
+  renderLabelRows();
+}
+function renderLabelRows() {
+  const items = UI.labels.items;
+  $('#lb-rows').innerHTML = items.length ? items.map((it, i) => { const c = S.cards[it.id], rp = rulePrice(it), ov = S.labelPrices?.[lblKey(it)], m = priceOf(c, it.v)?.gbp;
+    return `<label class="lb-row"><input type="checkbox" data-i="${i}"${it.on ? ' checked' : ''} aria-label="Include ${esc(c.name)}">
+      <span class="t"><b>${esc(c.name)}${it.n > 1 ? ` <span class="muted">×${it.n}</span>` : ''}</b><span>${VARIANTS[it.v] && it.v !== 'normal' ? esc(VARIANTS[it.v]) + ' · ' : ''}${esc(c.set_name)} ${esc(c.number)}</span></span>
+      <span class="small muted num" title="Market price">${m != null ? GBP.format(m) : 'no price'}</span>
+      <input class="inp mono" data-p="${i}" inputmode="decimal" aria-label="Sticker price for ${esc(c.name)}" placeholder="${rp != null ? rp.toFixed(2) : 'set £'}" value="${ov > 0 ? ov.toFixed(2) : ''}"></label>`; }).join('')
+    : `<p class="small muted" style="margin:8px">${L().src === 'spare' ? 'No spares yet. Set quantities above 1 in a card’s details (the ⓘ on a pocket), or choose another source above.' : L().src === 'give' ? 'The trade calculator’s "You give" list is empty.' : 'No cards match the current filters.'}</p>`;
+  updateLabelCount();
+}
+function selectedStickers() {
+  const out = [];
+  for (const it of UI.labels.items) { if (!it.on) continue; const p = labelPrice(it); for (let k = 0; k < it.n; k++) out.push({ ...it, price:p }); }
+  return out;
+}
+function updateLabelCount() {
+  const st = selectedStickers(), unpriced = st.filter(x => x.price == null).length;
+  $('#lb-count').textContent = `${st.length} sticker${st.length === 1 ? '' : 's'}${unpriced ? ` · ${unpriced} without a price (type one in)` : ''}`;
+  $('#lb-go').disabled = !st.length;
+  clearTimeout(UI.labels.pt); UI.labels.pt = setTimeout(renderLabelPreview, 120);
+}
+function labelDims() {
+  const o = L();
+  if (o.fmt === 'sheet') { const t = CONFIG.labelSheets[o.tpl] || CONFIG.labelSheets.L7160; return { w:t.w, h:t.h }; }
+  if (o.size !== 'custom') { const [w, h] = o.size.split('x').map(Number); return { w, h }; }
+  return { w:Math.min(150, Math.max(15, +o.w || 50)), h:Math.min(150, Math.max(10, +o.h || 30)) };
+}
+function syncLabelForm() {
+  const o = L(), sheet = o.fmt === 'sheet';
+  $('#lb-sheet-opts').classList.toggle('hidden', !sheet); $('#lb-thermal-opts').classList.toggle('hidden', sheet);
+  $('#lb-w').closest('.row').classList.toggle('hidden', o.size !== 'custom');
+  $('#lb-w').value = o.w; $('#lb-h').value = o.h;
+  $('#lb-logo-img').classList.toggle('hidden', !o.logo); $('#lb-logo-rm').classList.toggle('hidden', !o.logo); if (o.logo) $('#lb-logo-img').src = o.logo;
+  const t = CONFIG.labelSheets[o.tpl];
+  $('#lb-tip').textContent = sheet ? `${t.cols * t.rows} stickers per A4 sheet. In the print dialog choose A4 and 100% scale (not "fit"). Do a test on plain paper first and hold it against a sheet — use the nudge boxes to line it up.`
+    : 'Tap Share images and choose "Save Images" to put them in Photos, then open your printer’s app (e.g. NIIMBOT or Phomemo), choose the image option and print. Match the label size in both apps.';
+  $('#lb-go').innerHTML = sheet ? `${ic('printer', 'sm')}Print` : `${ic('share', 'sm')}Share images`;
+  $('#lb-dl').classList.toggle('hidden', sheet);
+  updateLabelCount();
+}
+async function loadLogo() {
+  const src = L().logo; UI.labels.logoImg = null; if (!src) return;
+  const img = new Image(); img.src = src; try { await img.decode(); UI.labels.logoImg = img; } catch {}
+}
+/* Draw one sticker. Black on white only, so it prints cleanly on thermal and laser alike. */
+function drawLabel(it, wmm, hmm, ppm) {
+  const W = Math.round(wmm * ppm), H = Math.round(hmm * ppm), cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const g = cv.getContext('2d'), c = S.cards[it.id], o = L(), F = 'system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif';
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); g.fillStyle = '#000'; g.textBaseline = 'alphabetic';
+  const pad = Math.max(2, Math.round(Math.min(W, H) * 0.075)), inner = W - pad * 2;
+  const fit = (text, weight, size, maxW, minSize) => { let fs = size; g.font = `${weight} ${fs}px ${F}`; while (g.measureText(text).width > maxW && fs > minSize) { fs -= Math.max(1, fs * 0.05); g.font = `${weight} ${fs}px ${F}`; }
+    let t = text; while (g.measureText(t).width > maxW && t.length > 1) t = t.slice(0, -2) + '…'; return { t, fs }; };
+  let y = pad;
+  // header: logo + stall name
+  const logo = UI.labels.logoImg, hasHead = logo || o.stall, headH = H * 0.19;
+  if (hasHead) {
+    let x = pad;
+    if (logo) { const sc = Math.min(headH / logo.naturalHeight, (W * 0.4) / logo.naturalWidth); const lw = logo.naturalWidth * sc, lh = logo.naturalHeight * sc;
+      g.drawImage(logo, x, y + (headH - lh) / 2, lw, lh); x += lw + pad * 0.6; }
+    if (o.stall) { const f = fit(o.stall, 650, headH * 0.7, W - x - pad, headH * 0.4); g.fillText(f.t, x, y + headH * 0.5 + f.fs * 0.36); }
+    y += headH + pad * 0.5;
+    g.fillRect(pad, y - pad * 0.3, inner, Math.max(1, H * 0.008));
+  }
+  // card name
+  const nameMax = hasHead ? H * 0.17 : H * 0.22;
+  const nm = fit(c.name, 800, nameMax, inner, H * 0.1);
+  y += nm.fs * 0.95; g.fillText(nm.t, pad, y);
+  // printing tag + set / number
+  const subFs = H * (hasHead ? 0.1 : 0.115); y += subFs * 1.35; let x = pad;
+  if (it.v && it.v !== 'normal' && VARIANTS[it.v]) {
+    g.font = `800 ${subFs * 0.85}px ${F}`; const tag = VARIANTS[it.v].toUpperCase(), tw = g.measureText(tag).width + subFs * 0.7;
+    g.fillRect(x, y - subFs * 0.92, tw, subFs * 1.18); g.fillStyle = '#fff'; g.fillText(tag, x + subFs * 0.35, y - subFs * 0.06); g.fillStyle = '#000'; x += tw + subFs * 0.4;
+  }
+  const code = (S.setsCache?.data || []).find(st => st.id === c.set_id)?.ptcgoCode;
+  const setTxt = `${code || c.set_name} · ${c.number}${c.rarity && !code ? '' : ''}`;
+  const sf = fit(setTxt, 500, subFs, W - x - pad, subFs * 0.7); g.fillText(sf.t, x, y);
+  // price — big, bottom right
+  const priceTxt = it.price != null ? GBP.format(it.price) : '£';
+  const pf = fit(priceTxt, 850, Math.min(H - y - pad, H * 0.34), inner, H * 0.14);
+  g.textAlign = 'right'; g.fillText(pf.t, W - pad, H - pad); g.textAlign = 'left';
+  if (o.stall || logo) {} // header already drawn
+  return cv;
+}
+function renderLabelPreview() {
+  const st = selectedStickers(), box = $('#lb-preview'); if (!box) return;
+  const { w, h } = labelDims(), seen = new Set(), pick = [];
+  for (const s of st) { const k = lblKey(s); if (!seen.has(k)) { seen.add(k); pick.push(s); } if (pick.length === 3) break; }
+  box.innerHTML = '';
+  pick.forEach(s => { const cv = drawLabel(s, w, h, 8); const img = new Image(); img.src = cv.toDataURL('image/png'); img.style.width = Math.min(260, w * 4) + 'px'; img.alt = 'Sticker preview'; box.append(img); });
+  if (!pick.length) box.innerHTML = '<span class="small muted">Tick some cards to see a preview.</span>';
+  box.insertAdjacentHTML('beforeend', `<span class="small muted">${w} × ${h} mm</span>`);
+}
+async function printLabelSheet() {
+  const o = L(), t = CONFIG.labelSheets[o.tpl], per = t.cols * t.rows, st = selectedStickers();
+  if (!st.length) return;
+  const ppm = 300 / 25.4, cache = new Map(), start = Math.max(1, Math.min(per, Math.floor(+o.start || 1))) - 1;
+  const url = s => { const k = lblKey(s) + '|' + s.price; if (!cache.has(k)) cache.set(k, drawLabel(s, t.w, t.h, ppm).toDataURL('image/png')); return cache.get(k); };
+  let html = '', slot = start, page = '';
+  for (const s of st) {
+    if (slot === per) { html += `<div class="lbl-page">${page}</div>`; page = ''; slot = 0; }
+    const col = slot % t.cols, row = Math.floor(slot / t.cols);
+    page += `<img src="${url(s)}" alt="" style="left:${(t.left + col * t.px + (+o.dx || 0)).toFixed(2)}mm;top:${(t.top + row * t.py + (+o.dy || 0)).toFixed(2)}mm;width:${t.w}mm;height:${t.h}mm">`;
+    slot++;
+  }
+  html += `<div class="lbl-page">${page}</div>`;
+  $('#print-root').innerHTML = html;
+  const ps = document.createElement('style'); ps.id = 'lbl-page-style'; ps.textContent = '@page{size:A4;margin:0}'; document.head.append(ps);
+  $('#dlg-labels').close();
+  await Promise.all($$('#print-root img').map(i => i.complete ? 0 : new Promise(r => { i.onload = i.onerror = r; })));
+  const sheets = Math.ceil((start + st.length) / per);
+  toast(`Printing ${st.length} sticker${st.length === 1 ? '' : 's'} on ${sheets} sheet${sheets === 1 ? '' : 's'} — choose A4, 100% scale`, 'info');
+  window.print();
+  const next = (start + st.length) % per; o.start = next + 1; save();   // continue on the part-used sheet next time
+}
+async function thermalFiles() {
+  const st = selectedStickers(), { w, h } = labelDims(), ppm = CONFIG.thermalDpi / 25.4, files = [], cache = new Map();
+  let i = 0;
+  for (const s of st) {
+    const k = lblKey(s) + '|' + s.price;
+    if (!cache.has(k)) cache.set(k, await new Promise(res => drawLabel(s, w, h, ppm).toBlob(res, 'image/png')));
+    const c = S.cards[s.id], name = `${String(++i).padStart(3, '0')}_${fileSafe(c.name)}_${fileSafe(c.number)}${s.v && s.v !== 'normal' ? '_' + s.v : ''}.png`;
+    files.push(new File([cache.get(k)], name, { type:'image/png' }));
+  }
+  return files;
+}
+async function shareThermal(downloadOnly) {
+  const files = await thermalFiles(); if (!files.length) return;
+  if (!downloadOnly && navigator.canShare?.({ files })) {
+    try { await navigator.share({ files, title:'Price stickers' }); toast(`Shared ${files.length} sticker image${files.length === 1 ? '' : 's'}`, 'success'); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  for (const f of files) { download(f.name, f, 'image/png'); await sleep(250); }
+  toast(`Downloaded ${files.length} sticker image${files.length === 1 ? '' : 's'}`, 'success');
+}
+// ---- wiring ----
+const lblSet = (k, v) => { L()[k] = v; save(); };
+$('#lb-src').addEventListener('change', e => { lblSet('src', e.target.value); buildLabelItems(); });
+$('#lb-copies').addEventListener('change', e => { lblSet('copies', e.target.value); buildLabelItems(); });
+$('#lb-pct').addEventListener('change', e => { const v = parseFloat(e.target.value); lblSet('pct', v > 0 && v <= 1000 ? v : 100); renderLabelRows(); });
+$('#lb-round').addEventListener('change', e => { lblSet('round', +e.target.value || 0); renderLabelRows(); });
+$('#lb-min').addEventListener('change', e => { const v = parseFloat(e.target.value.replace(/[£\s]/g, '')); lblSet('min', v > 0 && v < 1e5 ? v : 0); renderLabelRows(); });
+$('#lb-stall').addEventListener('input', e => { lblSet('stall', e.target.value.slice(0, 40)); updateLabelCount(); });
+['start','dx','dy'].forEach(k => $('#lb-' + k).addEventListener('change', e => { const v = parseFloat(e.target.value); lblSet(k, Number.isFinite(v) ? Math.max(-20, Math.min(k === 'start' ? 65 : 20, v)) : (k === 'start' ? 1 : 0)); }));
+$('#lb-tpl').addEventListener('change', e => { if (CONFIG.labelSheets[e.target.value]) { lblSet('tpl', e.target.value); lblSet('start', 1); $('#lb-start').value = ''; syncLabelForm(); } });
+$('#lb-size').addEventListener('change', e => { if (CONFIG.thermalSizes[e.target.value]) { lblSet('size', e.target.value); syncLabelForm(); } });
+['w','h'].forEach(k => $('#lb-' + k).addEventListener('change', e => { const v = parseFloat(e.target.value); if (v > 0) { lblSet(k, v); updateLabelCount(); } }));
+$$('input[name=lb-fmt]').forEach(x => x.addEventListener('change', () => { lblSet('fmt', x.value); syncLabelForm(); }));
+$('#lb-rows').addEventListener('change', e => {
+  const i = e.target.dataset.i, p = e.target.dataset.p;
+  if (i != null) { UI.labels.items[+i].on = e.target.checked; updateLabelCount(); }
+  if (p != null) { const it = UI.labels.items[+p], v = parseFloat(e.target.value.replace(/[£,\s]/g, '')); S.labelPrices ||= {};
+    if (v > 0 && v < 1e5) S.labelPrices[lblKey(it)] = Math.round(v * 100) / 100; else delete S.labelPrices[lblKey(it)];
+    save(); renderLabelRows(); }
+});
+$('#lb-all').addEventListener('click', () => { UI.labels.items.forEach(it => it.on = true); renderLabelRows(); });
+$('#lb-none').addEventListener('click', () => { UI.labels.items.forEach(it => it.on = false); renderLabelRows(); });
+$('#lb-reset').addEventListener('click', () => { const n = Object.keys(S.labelPrices || {}).length; S.labelPrices = {}; save(); renderLabelRows(); toast(n ? `Cleared ${n} price override${n === 1 ? '' : 's'}` : 'No overrides to clear', 'success'); });
+$('#lb-logo').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  if (!/^image\/(png|jpeg|webp)$/.test(f.type) || f.size > 8e6) { toast('Choose a PNG, JPEG or WebP image under 8 MB', 'error'); return; }
+  try {   // re-encode through a canvas: strips metadata and anything that isn't pixels, and keeps it small
+    const bmp = await createImageBitmap(f), sc = Math.min(1, 480 / bmp.width, 200 / bmp.height);
+    const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(bmp.width * sc)); cv.height = Math.max(1, Math.round(bmp.height * sc));
+    const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height); g.drawImage(bmp, 0, 0, cv.width, cv.height);
+    // black & white with a contrast boost, done once here so every printer gets the same crisp logo
+    const px = g.getImageData(0, 0, cv.width, cv.height), d = px.data;
+    for (let i = 0; i < d.length; i += 4) { const l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; const v = Math.max(0, Math.min(255, (l - 128) * 1.4 + 128)); d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255; }
+    g.putImageData(px, 0, 0);
+    lblSet('logo', cv.toDataURL('image/png')); await loadLogo(); syncLabelForm(); toast('Logo saved', 'success');
+  } catch { toast('Couldn’t read that image', 'error'); }
+});
+$('#lb-logo-rm').addEventListener('click', async () => { lblSet('logo', ''); await loadLogo(); syncLabelForm(); });
+$('#lb-go').addEventListener('click', () => L().fmt === 'sheet' ? printLabelSheet() : shareThermal(false));
+$('#lb-dl').addEventListener('click', () => shareThermal(true));
+window.addEventListener('afterprint', () => document.getElementById('lbl-page-style')?.remove());
+
 /* ==========================================================================
    TOASTS
    ========================================================================== */
@@ -1686,6 +1925,7 @@ document.addEventListener('click', e => {
       try { const [c] = await apiFetchAll(`id:"${id}"`); if (c) { mergeCard(c); save(); } await loadFx(); openInfo(eid); renderProgress(); toast(c?.price ? 'Price updated' : 'Still no price for this card', c?.price ? 'success' : 'warn'); }
       catch (err) { toast('Refresh failed: ' + err.message, 'error'); } })(); break;
     case 'share-want': shareRows(rowsFor(active(), 'needed')); break;
+    case 'labels': openLabels(); break;
     case 'share-trade': shareRows(rowsFor(active(), 'spare')); break;
     case 'give': tradeAdd('give', t.dataset.card, t.dataset.v); break;
     case 'trade-rm': { const side = t.dataset.side; S.trade[side].splice(+t.dataset.i, 1); save(); renderView(); break; }
