@@ -188,6 +188,7 @@ label.f{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin:
 .pdot.good{background:var(--ok)} .pdot.fallback{background:var(--warn)} .pdot.stale{background:var(--danger);box-shadow:0 0 0 2px color-mix(in srgb,var(--danger) 30%,transparent)}
 .ptrend{font-size:11px;font-weight:700;margin-left:5px;font-variant-numeric:tabular-nums} .ptrend.up{color:var(--ok)} .ptrend.down{color:var(--danger)}
 .big .ptrend{font-size:13px}
+.match-banner{margin-bottom:12px;border-left:3px solid var(--accent)} .match-banner summary{cursor:pointer}
 .plegend{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:5px} .plegend li{display:flex;align-items:baseline;gap:0} .plegend b{color:var(--text);margin-right:4px}
 .qual{padding:8px 10px;border-radius:8px;background:var(--surface)} .qual.good{border-left:3px solid var(--ok)} .qual.fallback{border-left:3px solid var(--warn)} .qual.stale{border-left:3px solid var(--danger)}
 .ptable{width:100%;border-collapse:collapse} .ptable th{text-align:left;font-size:11px;color:var(--text-3);font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:4px 6px}
@@ -565,6 +566,8 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
   <div class="dlg-h"><h3>Add cards</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
   <div class="dlg-b">
     <form id="form-search" class="row" style="align-items:flex-end">
+      <div style="flex:0 0 150px"><label class="f" for="s-lang">Language</label>
+        <select id="s-lang" class="inp"><option value="en">English</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh-tw">Chinese (Trad.)</option><option value="zh-cn">Chinese (Simp.)</option></select></div>
       <div style="flex:0 0 170px"><label class="f" for="s-mode">Search by</label>
         <select id="s-mode" class="inp">
           <option value="artist">Artist</option><option value="set">Expansion set</option>
@@ -578,7 +581,7 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
     <datalist id="set-list"></datalist>
     <p class="small muted hidden" id="s-code-help" style="margin:0">Type the set code and number printed at the bottom of each card. Separate several with commas, e.g. <code>PBL 42, MEW 1, SVI 107/198</code>. Promos work too, e.g. <code>SVP 045</code>.</p>
     <label class="chk" id="s-unc-wrap" style="margin:0"><input type="checkbox" id="s-uncredited"><span>Also list every card with <b>no artist credit</b> to pick by eye (slower; TCGdex usually covers these) <small class="muted" id="s-unc-note"></small></span></label>
-    <div class="statusline" id="s-status">Searches the Pokémon TCG API. Offline? Results come from cards you've already synced.</div>
+    <div class="statusline" id="s-status">English searches use the Pokémon TCG API plus TCGdex for anything newer or missing. Other languages use TCGdex. Offline? Results come from cards you've already synced.</div>
     <div class="row hidden" id="s-tools">
       <button class="btn sm" data-sel="all">Select all</button>
       <button class="btn sm" data-sel="none">None</button>

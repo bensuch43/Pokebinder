@@ -96,3 +96,9 @@ All code fixes are done in v2.4. The remaining actions are yours:
 - **New outbound calls:** per-card price lookups to `api.tcgdex.net`, which was already allowed in the Content Security Policy. No new hosts, no keys, nothing personal is sent (only set and card IDs).
 - **Stored data:** TCGdex price figures and the matched TCGdex card ID. Both go through the restore sanitiser: numbers must be positive and under 1,000,000, dates must be `YYYY-MM-DD`, and IDs must match `^[A-Za-z0-9.-]{1,40}$`.
 - **Rendering:** all figures are formatted numbers; source names and dates are escaped.
+
+## v3.0 addendum: TCGdex as the main card source
+
+- **No new hosts:** card searches and details for new sets and other languages come from `api.tcgdex.net`, already allowed by the Content Security Policy. Card images load from `assets.tcgdex.net` over HTTPS (images were already allowed from any HTTPS host).
+- **Stored data:** TCGdex cards are normalised into the same fields as before and pass the same restore checks; the new `lang` and `src` fields are allow-listed values only.
+- **Backups:** set and search caches are now left out of backup files, which keeps them small. They rebuild themselves.

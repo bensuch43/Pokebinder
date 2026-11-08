@@ -3,10 +3,10 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '2.9.0',
+  version: '3.0.0',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
-  maxRetries: 4,           // for 429 / 5xx, exponential back-off
+  maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
   setsCacheDays: 7,        // how long the set list (for autocomplete) is cached
   defaultLayout: '3x3',
   storageKey: 'state',     // IndexedDB key
@@ -17,7 +17,7 @@ const CONFIG = {
   uncreditedSets: ['sv7','sv8','sv8pt5','sv9','sv10','me1','me3','me5','svp','swsh12pt5','sv2'],
   uncreditedCacheDays: 7,
   /* TCGdex (https://tcgdex.dev) — second community card database, used only to fill missing artist credits. */
-  tcgdexBase: 'https://api.tcgdex.net/v2/en',
+  tcgdexRoot: 'https://api.tcgdex.net/v2',   // + /{language}
   tcgdexCacheDays: 7,
   /* Prices: the Pokémon TCG API returns Cardmarket (EUR, European market — closest to UK) and
      TCGplayer (USD, US market). Neither is in GBP, so we convert using the ECB reference rate. */
@@ -501,7 +501,7 @@ async function refreshPrices() {
     ids.forEach(id => { if (S.cards[id].price?.td) S.cards[id].price.td.fetched = ''; });
     const tdGot = await tcgdexPrices(ids, (n, t) => { done = n; $('#prog-value').textContent = `Refreshing Cardmarket prices… ${n} / ${t}`; });
     // 2) cards TCGdex can't match: try the Pokémon TCG API (old prices, flagged stale)
-    const missing = ids.filter(id => !S.cards[id].price?.td);
+    const missing = ids.filter(id => !S.cards[id].price?.td && S.cards[id].src !== 'tcgdex' && !S.cards[id].lang);
     for (let i = 0; i < missing.length; i += CONFIG.priceBatch) {
       $('#prog-value').textContent = `Checking ${missing.length} card(s) TCGdex couldn't price…`;
       try { (await apiFetchAll('(' + missing.slice(i, i + CONFIG.priceBatch).map(id => `id:"${id.replace(/"/g, '')}"`).join(' OR ') + ')')).forEach(mergeCard); } catch { break; }
@@ -596,7 +596,12 @@ function listHtml(col) {
   const rows = L.cards.filter(c => matches(c, col));
   if (!rows.length) return `<div class="empty-msg">No cards match these filters.</div>`;
   if (UI.listSort === 'value') rows.sort((a, b) => (priceOf(b)?.gbp ?? priceOf(b)?.native ?? -1) - (priceOf(a)?.gbp ?? priceOf(a)?.native ?? -1));
-  return `<div class="panel"><div class="bulk"><span class="small muted">${rows.length} card${rows.length === 1 ? '' : 's'} · tap a row to tick it off</span>
+  const nCustom = col.cardIds.filter(id => S.cards[id]?.custom).length, rep = UI.matchReport;
+  const banner = nCustom || rep ? `<div class="panel match-banner"><div class="row" style="justify-content:space-between;align-items:center">
+      <span class="small">${nCustom ? `<b>${nCustom} custom card${nCustom === 1 ? '' : 's'}</b> — these have no images or prices. TCGdex may now have some of them.` : 'All custom cards matched.'}</span>
+      ${nCustom ? `<button class="btn sm" data-act="match-custom">${ic('search', 'sm')}Match to TCGdex</button>` : ''}</div>
+      ${rep?.missed.length ? `<details class="small muted" style="margin-top:6px"><summary>${rep.done} matched last time · ${rep.missed.length} couldn't be matched</summary><ul style="margin:6px 0 0 18px;padding:0">${rep.missed.slice(0, 200).map(m => `<li>${esc(m)}</li>`).join('')}</ul></details>` : ''}</div>` : '';
+  return `${banner}<div class="panel"><div class="bulk"><span class="small muted">${rows.length} card${rows.length === 1 ? '' : 's'} · tap a row to tick it off</span>
     <div class="row"><button class="btn sm" data-act="bulk-own">${ic('check', 'sm')}Mark shown as owned</button><button class="btn sm" data-act="bulk-need">Mark shown as needed</button></div></div>
     <div style="overflow-x:auto"><table class="tbl"><thead><tr><th><span class="sr">Owned</span></th><th>Card</th><th class="hide-m">No.</th><th class="hide-m">Set</th><th class="hide-m">Released</th><th class="hide-m">Rarity</th><th class="hide-m">Qty</th><th data-sort="value" data-act="sort-value" title="Sort by value" aria-sort="${UI.listSort === 'value' ? 'descending' : 'none'}">${UI.listSort === 'value' ? 'Value ↓' : 'Value'}</th><th>Binder</th><th><span class="sr">Details</span></th></tr></thead><tbody>
     ${rows.map(c => { const own = !!col.owned[c.id], p = L.pos.get(c.id), pi = priceOf(c), q = entryQty(col, c);
@@ -863,15 +868,112 @@ function priceBoxHtml(c, variant) {
     <div class="row"><button class="btn sm" data-act="refresh-one">${ic('refresh', 'sm')}Refresh this price</button>${cmUrl ? `<a class="small" href="${esc(cmUrl)}" target="_blank" rel="noopener noreferrer" title="Searches Cardmarket for “${esc(c.name)}” — pick ${esc(c.set_name || 'the set')} ${esc(c.number || '')}">Find on Cardmarket</a>` : ''}</div></div>`;
 }
 
-/* ---------- TCGdex hourly Cardmarket prices ---------- */
+/* ==========================================================================
+   TCGDEX — primary card catalogue (all languages, new sets) and hourly Cardmarket prices
+   ========================================================================== */
+const TD_LANGS = { en:'English', ja:'Japanese', ko:'Korean', 'zh-tw':'Chinese (Traditional)', 'zh-cn':'Chinese (Simplified)' };
 const PT_TO_TD = (() => { const m = {}; for (const [td, pt] of Object.entries(TCGDEX_SET_MAP)) (m[pt] ||= []).push(td); return m; })();
 const normNo = n => String(n || '').toUpperCase().replace(/^([A-Z]*)0+(?=\d)/, '$1');
-async function tdSetIndex(tdSet) {
-  S.tdIndex ||= {};
-  const hit = S.tdIndex[tdSet]; if (hit && Date.now() - hit.ts < 7 * 864e5) return hit.m;
-  const j = await tcgdexJson(`/sets/${encodeURIComponent(tdSet)}`); if (!j?.cards) return null;
-  const m = {}; for (const c of j.cards) if (c?.id && c.localId != null) m[normNo(c.localId)] = { id:String(c.id), name:String(c.name || '') };
-  S.tdIndex[tdSet] = { ts:Date.now(), m }; return m;
+const tdLang = l => TD_LANGS[l] ? l : 'en';
+async function tdJson(lang, path, signal) {
+  const r = await fetch(`${CONFIG.tcgdexRoot}/${tdLang(lang)}${path}`, { signal });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`TCGdex HTTP ${r.status}`);
+  return r.json();
+}
+const tdBriefSet = b => b.id.slice(0, b.id.length - String(b.localId).length - 1);
+/* One set's details + card index, cached (7 days; 1 day for sets under a month old, which TCGdex is still filling in). */
+async function tdSet(lang, id, signal) {
+  S.tdSetCache ||= {}; const key = `${tdLang(lang)}:${id}`, hit = S.tdSetCache[key];
+  if (hit && Date.now() - hit.ts < (Date.now() - Date.parse(hit.rel || 0) < 30 * 864e5 ? 864e5 : 7 * 864e5)) return hit;
+  const j = await tdJson(lang, `/sets/${encodeURIComponent(id)}`, signal); if (!j) return null;
+  const m = {}; for (const c of j.cards || []) if (c?.id && c.localId != null) m[normNo(c.localId)] = { id:String(c.id), name:String(c.name || ''), localId:String(c.localId) };
+  const out = S.tdSetCache[key] = { ts:Date.now(), id:String(j.id), name:String(j.name || id), serie:String(j.serie?.name || ''), rel:String(j.releaseDate || '').slice(0, 10), code:String(j.abbreviation?.official || ''), m };
+  save(); return out;
+}
+async function tdSetIndex(tdSetId) { return (await tdSet('en', tdSetId))?.m || null; }   // used by price matching
+async function tdSetsList(lang, signal) {
+  S.tdSetsList ||= {}; const hit = S.tdSetsList[tdLang(lang)];
+  if (hit && Date.now() - hit.ts < 864e5) return hit.sets;
+  const j = await tdJson(lang, '/sets', signal);
+  const sets = (j || []).filter(s => s?.id && !isPocketSet(s.id)).map(s => ({ id:String(s.id), name:String(s.name || s.id) }));
+  S.tdSetsList[tdLang(lang)] = { ts:Date.now(), sets }; save(); return sets;
+}
+/* Does the (frozen) Pokémon TCG API have this TCGdex set? Synchronous best guess, used to avoid duplicate work. */
+const ptHasTdSet = td => !!(TCGDEX_SET_MAP[td] || S.tcgdexSetMap?.[td] || (S.setsCache?.data || []).some(s => s.id === ruleSetId(td)));
+const tdPrice = cm => { const n = v => v > 0 && v < 1e6 ? +v : null;
+  return { trend:n(cm.trend), avg1:n(cm.avg1), avg7:n(cm.avg7), avg30:n(cm.avg30), low:n(cm.low),
+    trendH:n(cm['trend-holo']), avg7H:n(cm['avg7-holo']), avg30H:n(cm['avg30-holo']), lowH:n(cm['low-holo']),
+    updated:String(cm.updated || '').slice(0, 10), fetched:new Date().toISOString() }; };
+/* A full TCGdex card → the app's card shape. English cards in sets the Pokémon TCG API also has keep that API's id
+   (e.g. swsh8-80) so they line up with cards already in your collections; everything else uses the TCGdex id,
+   prefixed with the language for non-English cards (ja-SV3-118). */
+async function tdToCard(j, lang = 'en', signal) {
+  lang = tdLang(lang);
+  const setId = String(j.set?.id || tdBriefSet(j)), set = await tdSet(lang, setId, signal).catch(() => null);
+  const num = String(j.localId ?? '').replace(/^0+(?=\d)/, '');
+  let pt = null;
+  if (lang === 'en') pt = TCGDEX_SET_MAP[setId] || S.tcgdexSetMap?.[setId] || (ptHasTdSet(setId) ? ruleSetId(setId) : null);
+  let id = pt ? `${pt}-${num}` : lang === 'en' ? String(j.id) : `${lang}-${j.id}`;
+  if (pt && S.cards[id] && normName(S.cards[id].name) !== normName(j.name)) { id = String(j.id); pt = null; }   // numbering differs: don't collide
+  if (!ID_RE.test(id)) id = (lang === 'en' ? '' : lang + '-') + String(j.id).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 50);
+  const v = j.variants || {}, variants = ['normal', 'holo', 'reverse', 'first'].filter(k => k === 'first' ? v.firstEdition : v[k]);
+  const cat = String(j.category || ''), isMon = (j.dexId?.length > 0) || /^pok/i.test(cat);
+  const img = safeUrl(j.image || ''), cm = j.pricing?.cardmarket;
+  return { id, name:String(j.name || '?'), number:num, set_id:pt || (lang === 'en' ? setId : `${lang}-${setId}`), set_name:set?.name || String(j.set?.name || setId),
+    series:(lang !== 'en' ? TD_LANGS[lang] + (set?.serie ? ' · ' : '') : '') + (set?.serie || ''), release_date:/^\d{4}-\d{2}-\d{2}$/.test(set?.rel) ? set.rel : '',
+    artist:String(j.illustrator || ''), rarity:j.rarity && j.rarity !== 'None' ? String(j.rarity) : '', dex:j.dexId?.[0] ?? null,
+    supertype:isMon ? 'Pokémon' : /trainer/i.test(cat) ? 'Trainer' : /energy/i.test(cat) ? 'Energy' : cat, img_s:img ? img + '/low.webp' : '', img_l:img ? img + '/high.webp' : '',
+    custom:false, src:'tcgdex', tdId:String(j.id), ...(lang !== 'en' ? { lang } : {}), ...(variants.length ? { variants } : {}),
+    ...(cm ? { price:{ td:tdPrice(cm), fetched:new Date().toISOString() } } : {}) };
+}
+/* Fetch full details for brief TCGdex cards, 8 at a time. */
+async function tdFull(briefs, lang, onProgress, signal) {
+  const out = []; let done = 0;
+  for (let i = 0; i < briefs.length; i += 8) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const got = await Promise.all(briefs.slice(i, i + 8).map(async b => {
+      try { const j = await tdJson(lang, `/cards/${encodeURIComponent(b.id)}`, signal); return j ? await tdToCard(j, lang, signal) : null; }
+      catch (e) { if (e.name === 'AbortError') throw e; return null; }
+      finally { onProgress?.(++done, briefs.length); }
+    }));
+    out.push(...got.filter(Boolean));
+  }
+  return out;
+}
+/* English name → National Dex number, so "Pidgey" can find ポッポ in Japanese sets. */
+const dexCache = new Map();
+async function dexFor(name, signal) {
+  const k = normName(name); if (dexCache.has(k)) return dexCache.get(k);
+  const list = await tdJson('en', `/cards?name=${encodeURIComponent(name)}`, signal) || [];
+  const b = list.find(x => normName(x.name) === k) || list.find(x => normName(x.name).startsWith(k));
+  const j = b ? await tdJson('en', `/cards/${encodeURIComponent(b.id)}`, signal) : null;
+  const d = j?.dexId?.[0] ?? null; dexCache.set(k, d); return d;
+}
+const TD_CAP = 300;
+/* Search TCGdex. mode: artist | set | name. Returns { cards, total, truncated, note }. `keep(brief)` can skip cards. */
+async function tdSearch(mode, term, lang, onProgress, signal, keep = () => true) {
+  lang = tdLang(lang); let briefs = [], note = '';
+  if (mode === 'artist') briefs = await tdJson(lang, `/cards?illustrator=${encodeURIComponent(term)}`, signal) || [];
+  else if (mode === 'set') {
+    const sets = await tdSetsList(lang, signal), t = normName(term);
+    const hit = sets.find(s => s.id.toLowerCase() === term.toLowerCase()) || sets.find(s => normName(s.name) === t)
+      || (sets.filter(s => normName(s.name).includes(t)).length === 1 ? sets.find(s => normName(s.name).includes(t)) : null);
+    if (!hit) { const near = sets.filter(s => normName(s.name).includes(t) || s.id.toLowerCase().includes(term.toLowerCase())).slice(0, 6);
+      return { cards:[], total:0, note:near.length ? `Several sets match — try one of: ${near.map(s => `${s.name} (${s.id})`).join(', ')}.` : 'No TCGdex set by that name.' }; }
+    const st = await tdSet(lang, hit.id, signal); briefs = Object.values(st?.m || {}).map(b => ({ ...b }));
+    note = `${st?.name || hit.name} (${hit.id})`;
+  } else {
+    if (lang !== 'en' && /^[\x20-\x7e]+$/.test(term)) {   // Latin text in a non-English search: go via the Pokédex number
+      const dex = await dexFor(term, signal);
+      if (dex == null) return { cards:[], total:0, note:`Couldn't find "${term}" as a Pokémon. For Trainer cards, type the ${TD_LANGS[lang]} name.` };
+      briefs = await tdJson(lang, `/cards?dexId=${dex}`, signal) || []; note = `Pokédex #${dex}`;
+    } else briefs = await tdJson(lang, `/cards?name=${encodeURIComponent(term)}`, signal) || [];
+  }
+  briefs = briefs.filter(b => b?.id && !isPocketSet(tdBriefSet(b)) && keep(b));
+  const total = briefs.length, truncated = total > TD_CAP;
+  const cards = await tdFull(briefs.slice(0, TD_CAP), lang, onProgress, signal);
+  return { cards:cards.sort(SORTS.release), total, truncated, note };
 }
 async function tcgdexIdFor(c) {
   const sets = [...(PT_TO_TD[c.set_id] || []), ...Object.entries(S.tcgdexSetMap || {}).filter(([, pt]) => pt === c.set_id).map(([td]) => td)];
@@ -888,13 +990,10 @@ async function tcgdexPrices(ids, onProgress, signal) {
   const work = async c => {
     try {
       if (signal?.aborted) return;
-      c.tdId ||= await tcgdexIdFor(c);
+      if (!c.tdId && !c.lang) c.tdId = await tcgdexIdFor(c);
       if (c.tdId) {
-        const j = await tcgdexJson(`/cards/${encodeURIComponent(c.tdId)}`, signal), cm = j?.pricing?.cardmarket;
-        if (cm) { const n = v => v > 0 ? +v : null;
-          c.price ||= {}; c.price.td = { trend:n(cm.trend), avg1:n(cm.avg1), avg7:n(cm.avg7), avg30:n(cm.avg30), low:n(cm.low),
-            trendH:n(cm['trend-holo']), avg7H:n(cm['avg7-holo']), avg30H:n(cm['avg30-holo']), lowH:n(cm['low-holo']),
-            updated:String(cm.updated || '').slice(0, 10), fetched:new Date().toISOString() }; c.price.fetched = c.price.td.fetched; got++; }
+        const j = await tdJson(c.lang || 'en', `/cards/${encodeURIComponent(c.tdId)}`, signal), cm = j?.pricing?.cardmarket;
+        if (cm) { c.price ||= {}; c.price.td = tdPrice(cm); c.price.fetched = c.price.td.fetched; got++; }
       }
     } catch { /* offline or TCGdex down: keep what we have */ }
     onProgress?.(++done, todo.length);
@@ -967,7 +1066,8 @@ function mergeCard(c) {
   if (!c.artist && old?.artist) { m.artist = old.artist; }
   else if (c.artist && !ours) { delete m.artist_assigned; delete m.artist_tcgdex; }
   if (!c.price && old?.price) m.price = old.price;
-  else if (c.price && old?.price?.td) m.price = { ...c.price, td:old.price.td };
+  else if (c.price && old?.price) m.price = { ...old.price, ...c.price, td:c.price.td || old.price.td };
+  if (old?.src === 'tcgdex' && !c.src) { m.src = 'tcgdex'; if (old.img_s && !c.img_s) { m.img_s = old.img_s; m.img_l = old.img_l; } }
   if (old?.tdId && !m.tdId) m.tdId = old.tdId;
   S.cards[c.id] = m;
 }
@@ -977,12 +1077,7 @@ const artistSource = c => c.artist_assigned ? 'assigned by you' : c.artist_tcgde
 const normName = s => String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const isPocketSet = id => /^(?:[AB]\d+[a-z]?|P-[AB])$/.test(id);   // TCG Pocket (digital only) — never in a binder
 function ruleSetId(id) { const m = id.match(/^([a-z]+)0*(\d+)(?:\.(5))?$/i); return m ? `${m[1].toLowerCase()}${m[2]}${m[3] ? 'pt5' : ''}` : id; }
-async function tcgdexJson(path, signal) {
-  const r = await fetch(`${CONFIG.tcgdexBase}${path}`, { signal });
-  if (r.status === 404) return null;
-  if (!r.ok) throw new Error(`TCGdex HTTP ${r.status}`);
-  return r.json();
-}
+function tcgdexJson(path, signal) { return tdJson('en', path, signal); }
 async function mapTcgdexSet(id, signal) {
   if (TCGDEX_SET_MAP[id]) return TCGDEX_SET_MAP[id];
   S.tcgdexSetMap ||= {};
@@ -1016,17 +1111,25 @@ async function tcgdexEnrich(artist, apiResults, onProgress, signal) {
     list = S.tcgdexCache[key] = { ts:Date.now(), cards:(j?.cards || []).map(c => ({ id:c.id, localId:String(c.localId), name:c.name })) };
     save();
   }
-  const out = { added:[], disputed:[], unmatched:[], pocket:0, total:list.cards.length };
+  const out = { added:[], disputed:[], unmatched:[], tdOnly:[], pocket:0, total:list.cards.length };
   const want = [];
   for (const t of list.cards) {
     const setId = t.id.slice(0, t.id.length - t.localId.length - 1);
     if (isPocketSet(setId)) { out.pocket++; continue; }
     const pt = await mapTcgdexSet(setId, signal);
-    if (!pt) { out.unmatched.push(`${t.name} (${setId} ${t.localId})`); continue; }
+    if (!pt) { out.tdOnly.push(t); continue; }
     const ptId = `${pt}-${t.localId.replace(/^0+(?=\d)/, '')}`;
     if (!haveIds.has(ptId)) want.push({ ...t, ptId });
   }
-  if (!want.length) return out;
+  const finish = async () => {   // cards only TCGdex has (new sets, or numbering the old API doesn't match)
+    if (!out.tdOnly.length) return out;
+    onProgress?.(`Fetching ${out.tdOnly.length} card(s) only TCGdex has…`);
+    const cards = await tdFull(out.tdOnly, 'en', null, signal), seen = new Set([...apiResults, ...out.added].map(c => c.id));
+    out.tdCards = cards.filter(c => !seen.has(c.id));
+    const got = new Set(cards.map(c => c.tdId)); out.unmatched.push(...out.tdOnly.filter(t => !got.has(t.id)).map(t => `${t.name} (${t.id})`));
+    return out;
+  };
+  if (!want.length) return finish();
   onProgress?.(`Fetching ${want.length} card(s) credited by TCGdex…`);
   const got = new Map();
   for (let i = 0; i < want.length; i += CONFIG.priceBatch) {
@@ -1036,11 +1139,11 @@ async function tcgdexEnrich(artist, apiResults, onProgress, signal) {
   const proper = apiResults.map(c => c.artist).find(a => a && a.toLowerCase() === key) || artist;   // use the API's spelling/case
   for (const w of want) {
     const c = got.get(w.ptId);
-    if (!c || normName(c.name) !== normName(w.name)) { out.unmatched.push(`${w.name} (${w.id})`); continue; }
+    if (!c || normName(c.name) !== normName(w.name)) { out.tdOnly.push(w); continue; }
     if (c.artist && c.artist.toLowerCase() !== key) { out.disputed.push({ ...c, tcgdexArtist:proper }); continue; }
     out.added.push({ ...c, artist:proper, artist_tcgdex:true });
   }
-  return out;
+  return finish();
 }
 function gapSets() {
   const s = (S.settings.uncreditedSets || '').split(/[\s,]+/).filter(Boolean);
@@ -1142,28 +1245,55 @@ $('#form-search').addEventListener('submit', async e => {
   const prog = label => (n, total, note) => { status.textContent = note || `${label}: fetched ${n}${isFinite(total) ? ' of ' + total : ''} cards…`; };
   let td = null, tdError = '';
   UI.search.badges = new Map(); UI.search.noSel = new Set();
+  const lang = tdLang($('#s-lang').value); let tdNote = '', tdCount = 0;
+  const tdProg = (n, t) => { status.textContent = `TCGdex: fetching card ${n} of ${t}…`; };
+  const addTd = r => { const have = new Set(results.map(c => c.id)); const fresh = r.cards.filter(c => !have.has(c.id));
+    fresh.forEach(c => UI.search.badges.set(c.id, lang === 'en' ? 'TCGdex' : LSHORT[lang === 'zh-tw' || lang === 'zh-cn' ? 'zh' : lang] || lang));
+    results = [...results, ...fresh]; tdCount += fresh.length;
+    if (r.truncated) tdNote += ` TCGdex returned ${r.total}; showing the first ${TD_CAP} — narrow the search to see the rest.`;
+    if (r.note && !r.cards.length) tdNote += ' ' + r.note; };
   try {
-    if (mode === 'code') { const r = await codeSearch(term, prog('Looking up'), ac.signal); results = r.results; UI.search.missing = r.missing; }
-    else { UI.search.missing = []; results = await apiFetchAll(buildQuery(mode, term), prog(mode === 'artist' ? 'Artist search' : 'Search'), ac.signal); }
-    if (mode === 'artist' && S.settings.tcgdex !== false) {
+    UI.search.missing = [];
+    if (lang !== 'en') {   // other languages: TCGdex only
+      if (mode === 'code' || mode === 'advanced') { status.textContent = `${mode === 'code' ? 'Printed-code' : 'Advanced'} search is English-only. Use Artist, Expansion set or Card name for ${TD_LANGS[lang]} cards.`; btn.disabled = false; return; }
+      addTd(await tdSearch(mode, term, lang, tdProg, ac.signal));
+    } else {
+      if (mode === 'code') { const r = await codeSearch(term, prog('Looking up'), ac.signal); results = r.results; UI.search.missing = r.missing; }
+      else if (mode === 'set' && !(await loadSets(), (S.setsCache?.data || []).some(s => s.name.toLowerCase() === term.toLowerCase() || s.id.toLowerCase() === term.toLowerCase()))) {
+        addTd(await tdSearch('set', term, 'en', tdProg, ac.signal));   // a set the old API doesn't have (e.g. anything after September 2026)
+      } else {
+        results = await apiFetchAll(buildQuery(mode, term), prog(mode === 'artist' ? 'Artist search' : 'Search'), ac.signal);
+        if (mode === 'name') addTd(await tdSearch('name', term, 'en', tdProg, ac.signal, b => !ptHasTdSet(tdBriefSet(b))).catch(e => { if (e.name === 'AbortError') throw e; tdError = e.message; return { cards:[] }; }));
+      }
+    }
+    if (lang === 'en' && mode === 'artist' && S.settings.tcgdex !== false) {
       try { td = await tcgdexEnrich(term, results, note => { status.textContent = note; }, ac.signal); }
       catch (e) { if (e.name === 'AbortError') throw e; tdError = e.message; }
       if (td) {
         td.added.forEach(c => UI.search.badges.set(c.id, 'via TCGdex'));
         td.disputed.forEach(c => { UI.search.badges.set(c.id, `API: ${c.artist}`); UI.search.noSel.add(c.id); });
         results = [...results, ...td.added, ...td.disputed];
+        (td.tdCards || []).forEach(c => UI.search.badges.set(c.id, 'TCGdex'));
+        results = [...results, ...(td.tdCards || [])]; tdCount += (td.tdCards || []).length;
       }
     }
     if (wantGaps) extra = await fetchUncredited(prog('Uncredited cards'), ac.signal);
-  } catch (err) {
+  } catch (e) {
+    let err = e;
     if (err.name === 'AbortError') return;
     if (err.status >= 400 && err.status < 500 && err.status !== 429) {   // the API understood us and said no: not an offline problem
       status.innerHTML = `The API rejected the query (${esc(err.message)}).<br>Sent: <code class="mono">${esc(err.query)}</code>${mode === 'advanced' ? '<br>Field names are case-sensitive, e.g. <code>artist:</code>, <code>set.id:</code>, <code>nationalPokedexNumbers:</code>. Use straight quotes for phrases.' : ''}`;
       UI.search.results = []; UI.search.extra = []; renderResults(); return;
     }
+    if (lang === 'en' && ['artist', 'set', 'name'].includes(mode)) {   // old API down: TCGdex can still answer
+      try { addTd(await tdSearch(mode, term, 'en', tdProg, ac.signal)); if (results.length) { tdNote = ` The Pokémon TCG API didn't respond (${err.message}), so these came from TCGdex.` + tdNote; err = null; } }
+      catch (e2) { if (e2.name === 'AbortError') return; }
+    }
+    if (err) {
     offline = true; results = results.length ? results : localSearch(mode, term);
     if (wantGaps && S.gapCache) extra = S.gapCache.ids.map(id => S.cards[id]).filter(Boolean);
-    status.textContent = `Couldn't reach the API (${err.message}). Showing ${results.length} matching card(s) already saved on this device.`;
+    status.textContent = `Couldn't reach the card databases (${err.message}). Showing ${results.length} matching card(s) already saved on this device.`;
+    }
   } finally { btn.disabled = false; }
   if (mode === 'artist') {
     // cards you previously assigned to this artist join the main results; the rest stay "uncredited"
@@ -1182,12 +1312,15 @@ $('#form-search').addEventListener('submit', async e => {
   if (!offline) {
     const nTd = [...UI.search.badges.values()].filter(v => v === 'via TCGdex').length, nDisp = td?.disputed.length || 0;
     const parts = [];
-    if (mode === 'artist') parts.push(`${results.length - nTd - nDisp - [...UI.search.badges.values()].filter(v => v === 'set by you').length} credited by the Pokémon TCG API`);
+    const nPt = results.length - nTd - nDisp - tdCount - [...UI.search.badges.values()].filter(v => v === 'set by you').length;
+    if (lang === 'en' && nPt > 0 && (mode === 'artist' || tdCount)) parts.push(`${nPt} from the Pokémon TCG API`);
+    if (tdCount) parts.push(`${tdCount} from TCGdex${lang !== 'en' ? ` (${TD_LANGS[lang]})` : ''}`);
     if (nTd) parts.push(`${nTd} credited via TCGdex`);
     if ([...UI.search.badges.values()].includes('set by you')) parts.push(`${[...UI.search.badges.values()].filter(v => v === 'set by you').length} set by you`);
     if (nDisp) parts.push(`${nDisp} where the two databases disagree (not selected)`);
-    let msg = results.length ? (mode === 'artist' ? `Found ${results.length}: ${parts.join(' · ')}.` : `Found ${results.length} card${results.length === 1 ? '' : 's'}.`) + ' Tap to deselect any you don\'t want.' : 'No cards found. Check the spelling, or try Advanced query.';
+    let msg = results.length ? (parts.length ? `Found ${results.length}: ${parts.join(' · ')}.` : `Found ${results.length} card${results.length === 1 ? '' : 's'}.`) + ' Tap to deselect any you don\'t want.' : 'No cards found. Check the spelling, or try Advanced query.';
     if (td?.unmatched.length) msg += ` ${td.unmatched.length} TCGdex card(s) couldn't be matched: ${td.unmatched.slice(0, 5).join(', ')}${td.unmatched.length > 5 ? '…' : ''}.`;
+    msg += tdNote;
     if (tdError) msg += ` TCGdex unavailable (${tdError})${wantGaps ? '' : ' — tick "Also list every card with no artist credit" to find newer cards by eye'}.`;
     if (extra.length) msg += ` + ${extra.length} uncredited to check (below).`;
     if (UI.search.missing?.length) msg += ` Not found: ${UI.search.missing.slice(0, 8).join(', ')}${UI.search.missing.length > 8 ? '…' : ''}.`;
@@ -1260,6 +1393,64 @@ $('#s-add').addEventListener('click', () => {
   toast(`Added ${n} card${n === 1 ? '' : 's'} to "${col.name}"${assigned ? ` (${assigned} credited to ${UI.search.artist} by you)` : ''}`, 'success');
 });
 $('#dlg-add').addEventListener('close', () => UI.search.abort?.abort());
+
+/* ---------- custom cards → real TCGdex cards ---------- */
+const LANG_PREFIX = { japanese:'ja', korean:'ko', chinese:'zh-tw' };
+function customLang(c) { const w = `${c.series} ${c.set_name}`.toLowerCase().match(/\b(japanese|korean|chinese)\b/); return w ? LANG_PREFIX[w[1]] : 'en'; }
+const baseName = n => String(n || '').replace(/\s*[\[(].*?[\])]\s*/g, ' ').trim();
+async function findTdForCustom(c, signal) {
+  const lang = customLang(c), num = normNo(c.number); if (!num) return { why:'no card number' };
+  if (lang === 'en') {
+    const setName = c.set_name.replace(/^pok[eé]mon\s+/i, ''), sets = await tdSetsList('en', signal);
+    const st = sets.find(s => normName(s.name) === normName(setName)); if (!st) return { why:`TCGdex has no set called "${setName}" yet` };
+    const idx = await tdSet('en', st.id, signal), b = idx?.m?.[num];
+    if (!b) return { why:`${st.name} has no card ${c.number} on TCGdex yet` };
+    if (!normName(b.name).startsWith(normName(baseName(c.name))) && !normName(baseName(c.name)).startsWith(normName(b.name))) return { why:`${st.name} ${c.number} is ${b.name} on TCGdex` };
+    const j = await tdJson('en', `/cards/${encodeURIComponent(b.id)}`, signal); return j ? { card:await tdToCard(j, 'en', signal) } : { why:'card details unavailable' };
+  }
+  // other languages: TCGdex names are in Japanese/Korean/Chinese, so match on Pokédex number + card number
+  const langs = lang === 'zh-tw' ? ['zh-tw', 'zh-cn'] : [lang];
+  const dex = await dexFor(baseName(c.name).replace(/^(alolan|galarian|hisuian|paldean)\s+/i, ''), signal);
+  if (dex == null) return { why:"couldn't identify the Pokémon on TCGdex (Trainer cards need adding by hand)" };
+  for (const L of langs) {
+    const list = (await tdJson(L, `/cards?dexId=${dex}`, signal) || []).filter(b => normNo(b.localId) === num);
+    if (list.length === 1) { const j = await tdJson(L, `/cards/${encodeURIComponent(list[0].id)}`, signal); if (j) return { card:await tdToCard(j, L, signal) }; }
+    if (list.length > 1) return { why:`${list.length} ${TD_LANGS[L]} cards share that name and number (${list.map(b => tdBriefSet(b)).join(', ')})` };
+  }
+  return { why:`TCGdex has no ${TD_LANGS[lang]} match` + (lang === 'zh-tw' ? ' (it has very little Chinese card data)' : '') };
+}
+/* Swap a card id everywhere: collections (ids + copies), stock, sticker prices. The old card stays in storage for the ledger. */
+function replaceCardId(oldId, card) {
+  mergeCard(card); const nid = card.id; if (nid === oldId) return;
+  for (const col of Object.values(S.collections)) {
+    const i = col.cardIds.indexOf(oldId); if (i < 0) continue;
+    if (col.cardIds.includes(nid)) col.cardIds.splice(i, 1); else col.cardIds[i] = nid;
+    const from = col.copies?.[oldId];
+    if (from) { const to = col.copies[nid] ||= {};
+      for (const [v, r] of Object.entries(from)) { const t = to[v] ||= { q:0 }; t.q = Math.min(999, (t.q || 0) + (r.q || 0)); for (const k of ['c', 'p', 'd']) if (r[k] != null && t[k] == null) t[k] = r[k]; }
+      delete col.copies[oldId]; }
+    col.updated = Date.now(); syncOwned(col);
+  }
+  for (const l of Object.values(S.stock || {})) if (l.cardId === oldId) l.cardId = nid;
+  for (const k of Object.keys(S.labelPrices || {})) if (k.startsWith(oldId + '|')) { S.labelPrices[nid + k.slice(oldId.length)] ??= S.labelPrices[k]; delete S.labelPrices[k]; }
+}
+async function matchCustom() {
+  const col = active(); if (!col) return;
+  const customs = col.cardIds.map(id => S.cards[id]).filter(c => c?.custom);
+  if (!customs.length) { toast('No custom cards in this collection', 'warn'); return; }
+  const btn = $('[data-act=match-custom]'); if (btn) btn.disabled = true;
+  const done = [], missed = []; let n = 0;
+  try {
+    for (const c of customs) {
+      $('#prog-value').textContent = `Matching custom cards to TCGdex… ${++n} / ${customs.length}`;
+      try { const r = await findTdForCustom(c); if (r.card) { replaceCardId(c.id, r.card); done.push(r.card.id); } else missed.push(`${c.name} #${c.number} (${c.set_name}): ${r.why}`); }
+      catch (e) { missed.push(`${c.name} #${c.number}: ${e.message}`); }
+    }
+  } finally { if (btn) btn.disabled = false; }
+  save(); render();
+  UI.matchReport = { done:done.length, missed };
+  toast(`Matched ${done.length} of ${customs.length} custom cards${missed.length ? ` · ${missed.length} left as custom — see the list above the checklist` : ''}`, done.length ? 'success' : 'warn');
+}
 
 /* ---------- custom card ---------- */
 function openCustom() {
@@ -1383,7 +1574,8 @@ $('#e-copy').addEventListener('click', async () => {
   catch { toast('Clipboard not available — use Download instead', 'error'); }
 });
 $('#e-backup').addEventListener('click', () => {
-  const state = { ...S, settings:{ ...S.settings, apiKey:'' } };   // never put the API key in a file that might be shared
+  const { setsCache, gapCache, tcgdexCache, tdIndex, tdSetCache, tdSetsList, ...keep } = S;   // caches rebuild themselves; keep backups small
+  const state = { ...keep, settings:{ ...S.settings, apiKey:'' } };   // never put the API key in a file that might be shared
   download(`PokeBinder_backup_${today()}.json`, JSON.stringify({ app:'PokeBinderStudio', exported:new Date().toISOString(), state }), 'application/json');
   S.settings.lastBackup = Date.now(); save(); toast('Backup downloaded', 'success');
 });
@@ -1397,7 +1589,9 @@ function sanitizeCard(k, c) {
     series:str(c.series, 60), release_date:/^\d{4}-\d{2}-\d{2}$/.test(c.release_date) ? c.release_date : '', artist:str(c.artist, 80), rarity:str(c.rarity, 60),
     dex:numOr(c.dex), supertype:str(c.supertype, 20), img_s:safeUrl(c.img_s), img_l:safeUrl(c.img_l), custom:!!c.custom };
   if (c.artist_assigned) out.artist_assigned = true; if (c.artist_tcgdex) out.artist_tcgdex = true;
-  if (typeof c.tdId === 'string' && /^[A-Za-z0-9.-]{1,40}$/.test(c.tdId)) out.tdId = c.tdId;
+  if (typeof c.tdId === 'string' && /^[A-Za-z0-9._-]{1,50}$/.test(c.tdId)) out.tdId = c.tdId;
+  if (c.lang && TD_LANGS[c.lang] && c.lang !== 'en') out.lang = c.lang;
+  if (c.src === 'tcgdex') out.src = 'tcgdex';
   if (Array.isArray(c.variants)) out.variants = c.variants.filter(v => ['normal','holo','reverse','first'].includes(v));
   const pr = c.price;
   if (pr && typeof pr === 'object') {
@@ -1969,9 +2163,10 @@ document.addEventListener('click', e => {
     case 'clear-filters': UI.filters = { text:'', set:'all', status:'all', rarity:'all' }; render(); break;
     case 'goto-set': UI.filters.set = t.dataset.set; UI.view = 'list'; render(); break;
     case 'refresh-prices': refreshPrices(); break;
+    case 'match-custom': matchCustom(); break;
     case 'sort-value': e.stopPropagation(); UI.listSort = UI.listSort === 'value' ? 'binder' : 'value'; renderView(); break;
     case 'refresh-one': (async () => { const eid = UI.infoId, id = cardIdOf(eid);
-      try { if (S.cards[id]?.price?.td) S.cards[id].price.td.fetched = ''; await tcgdexPrices([id]); if (!S.cards[id]?.price?.td) { const [c] = await apiFetchAll(`id:"${id}"`).catch(() => []); if (c) mergeCard(c); } save(); await loadFx(); openInfo(eid); renderProgress(); toast(S.cards[id]?.price ? 'Price updated' : 'Still no price for this card', S.cards[id]?.price ? 'success' : 'warn'); }
+      try { if (S.cards[id]?.price?.td) S.cards[id].price.td.fetched = ''; await tcgdexPrices([id]); if (!S.cards[id]?.price?.td && S.cards[id]?.src !== 'tcgdex') { const [c] = await apiFetchAll(`id:"${id}"`).catch(() => []); if (c) mergeCard(c); } save(); await loadFx(); openInfo(eid); renderProgress(); toast(S.cards[id]?.price ? 'Price updated' : 'Still no price for this card', S.cards[id]?.price ? 'success' : 'warn'); }
       catch (err) { toast('Refresh failed: ' + err.message, 'error'); } })(); break;
     case 'share-want': shareRows(rowsFor(active(), 'needed')); break;
     case 'labels': openLabels(); break;

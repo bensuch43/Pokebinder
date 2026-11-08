@@ -1,4 +1,4 @@
-# PokéBinder Studio v2.9
+# PokéBinder Studio v3.0
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -77,6 +77,18 @@ The Pokémon TCG API has **no artist** recorded for about 1,600 cards, including
 - **Credits never get wiped.** An artist from TCGdex or from you survives later syncs and price refreshes. If the Pokémon TCG API later credits the card itself, its credit takes over.
 
 **Checked 6 November 2026** against snapshots of both datasets: TCGdex credits 212 physical Yuka Morii cards, and every one matched a Pokémon TCG API card. That's 205 already credited by the API, plus 7 that only TCGdex credits: Chewtle and Meltan (Stellar Crown), Applin (Surging Sparks), Karrablast (Journey Together), Smoliv (Destined Rivals), Helioptile (Mega Evolution) and Mankey (Pitch Black). The live APIs may be slightly newer than these snapshots.
+
+## Card data (v3.0): TCGdex first
+
+- **Why:** the Pokémon TCG API stopped updating in September 2026 (its last set is 30th Celebration). TCGdex is actively maintained, covers new sets within days, and has Japanese data with Cardmarket prices.
+- **English searches:** artist and card-name searches still ask the Pokémon TCG API first (complete and fast for older sets), then add anything only TCGdex has, tagged **TCGdex**. Searching a set the old API doesn't know (e.g. Delta Reign) goes straight to TCGdex. If the old API is down, searches fall back to TCGdex after about 6 seconds.
+- **Other languages:** pick Japanese, Korean or Chinese in the Add cards dialog. Search by artist, set (name or code, e.g. `SV3`) or card name. English Pokémon names work (it looks up the Pokédex number); Trainer cards need the Japanese/Korean/Chinese name. Printed-code and Advanced searches are English-only.
+- **Coverage:** Japanese is well covered, with images and Cardmarket prices for most cards. Korean and Chinese data on TCGdex is sparse, and Cardmarket has almost no Chinese prices, so those usually stay as custom cards with no price.
+- **Card IDs:** English cards in sets the old API has keep its IDs (e.g. `swsh8-80`), so nothing in existing collections changes. Newer English cards use TCGdex IDs (`me06-086`); other languages are prefixed (`ja-SV3-118`).
+- **Match custom cards:** a collection with custom cards shows a banner above the Checklist. **Match to TCGdex** swaps each custom card for the real one, keeping quantities, condition and price paid:
+  - English: matched on set name + card number, with the name checked.
+  - Japanese/Korean/Chinese: matched on Pokédex number + card number, and only when exactly one card fits.
+  - Anything unmatched stays custom, with the reason listed under the banner. Run it again later as TCGdex adds cards.
 
 ## Prices (GBP)
 
