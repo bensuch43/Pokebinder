@@ -70,17 +70,11 @@ const thumb = id => { const u = safeUrl(S.cards[id]?.img_s); return u ? `<img sr
 
 /* ---------- prices: online first, fall back to what's saved ---------- */
 async function freshen(ids) {
-  const stale = [...new Set(ids)].filter(id => { const c = S.cards[id]; return c && !c.custom && Date.now() - Date.parse(c.price?.fetched || 0) > 36e5; });
-  if (!stale.length || navigator.onLine === false) return false;
-  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 6000);
-  let ok = false;
-  try {
-    for (let i = 0; i < stale.length; i += CONFIG.priceBatch)
-      (await apiFetchAll('(' + stale.slice(i, i + CONFIG.priceBatch).map(id => `id:"${id}"`).join(' OR ') + ')', null, ac.signal)).forEach(mergeCard);
-    ok = true;
-  } catch { /* Pokémon TCG API slow or down: TCGdex below may still give a fresh price */ } finally { clearTimeout(timer); }
-  if (await tcgdexPrices(stale)) ok = true;
-  save(); return ok;
+  const want = [...new Set(ids)].filter(id => { const c = S.cards[id]; return c && !c.custom; });
+  if (!want.length || navigator.onLine === false) return false;
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 8000);
+  try { return (await tcgdexPrices(want, null, ac.signal)) > 0; }   // skips cards checked in the last hour
+  catch { return false; } finally { clearTimeout(timer); save(); }
 }
 function priceAge(id) {
   const f = Date.parse(S.cards[id]?.price?.fetched || 0);

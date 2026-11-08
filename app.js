@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '2.8.0',
+  version: '2.9.0',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 4,           // for 429 / 5xx, exponential back-off
@@ -22,7 +22,7 @@ const CONFIG = {
   /* Prices: the Pokémon TCG API returns Cardmarket (EUR, European market — closest to UK) and
      TCGplayer (USD, US market). Neither is in GBP, so we convert using the ECB reference rate. */
   priceSource: 'cardmarket',       // default; changeable in Settings
-  priceStaleDays: 14,              // flag prices whose source date is older than this
+  priceStaleDays: 3,               // flag prices whose source date is older than this (TCGdex refreshes hourly, so 3 days old means something's wrong)
   priceBatch: 60,                  // card IDs per API call when refreshing prices
   fxUrl: 'https://api.frankfurter.dev/v1/latest?base=EUR&symbols=GBP,USD',   // ECB rates, no key
   fxCacheHours: 12,
@@ -358,31 +358,28 @@ function fxLabel(cur) {
 }
 /* → { gbp, native, cur, src, metric, date, url, fetched, stale, fallback } or null */
 /* ---------- price figures, data quality and trend ----------
-   Cardmarket figures can come from two places:
-     · the Pokémon TCG API (card data + Cardmarket price guide, incl. "lowest Excellent-or-better listing") — can lag by months
-     · TCGdex (Cardmarket's official price guide, refreshed hourly) — no condition-filtered figure
-   We use the figure you choose (default: lowest EX+ listing) from the freshest source, and say how good it is:
+   Primary source: TCGdex, which republishes Cardmarket's official price guide every hour.
+   The Pokémon TCG API's own prices stopped updating (last data 1 July 2026), so they're only used
+   when TCGdex has nothing for a card — and then they're flagged stale.
      good     = your chosen figure, price date within CONFIG.priceStaleDays
-     fallback = chosen figure unavailable/stale, so a fresh 30-day average (or trend) is used instead
+     fallback = chosen figure missing, so another fresh figure (trend → 30-day → 7-day average) is used
      stale    = only old data exists — shown, but flagged red */
-const PRICE_FIG = { exlow:'lowest EX+ listing', avg30:'30-day average', trend:'trend', low:'lowest listing (any condition)' };
+const PRICE_FIG = { trend:'trend', avg30:'30-day average', avg7:'7-day average', low:'lowest listing (any condition)' };
+const FIG_FALLBACK = ['trend', 'avg30', 'avg7'];
+const figPref = () => PRICE_FIG[S.settings.priceFig] ? S.settings.priceFig : 'trend';
 const isFresh = d => !!d && (Date.now() - Date.parse(d)) / 864e5 <= CONFIG.priceStaleDays;
 function cmFigures(c, variant) {
   const pr = c?.price || {}, cm = pr.cm, td = pr.td, rev = variant === 'reverse', out = [];
-  const add = (fig, value, src, date, url) => { if (value > 0) out.push({ fig, value:+value, src, date:date || '', url:url || '', fresh:isFresh(date) }); };
-  if (cm) {
-    if (rev) { add('trend', cm.rev, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url); add('avg30', cm.revAvg30, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url); add('low', cm.revLow, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url); }
-    else {
-      add('exlow', cm.exLow, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url);
-      add('avg30', cm.avg30, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url);
-      add('trend', cm.trend ?? (cm.metric === 'trend' ? cm.value : null), 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url);
-      add('low', cm.low, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url);
-    }
-  }
+  const add = (fig, value, src, date) => { if (value > 0) out.push({ fig, value:+value, src, date:date || '', fresh:isFresh(date) }); };
   if (td) {
-    const url = td.idProduct ? '' : '';
-    if (rev) { add('avg30', td.avg30H, 'Cardmarket (via TCGdex, hourly)', td.updated, url); add('trend', td.trendH, 'Cardmarket (via TCGdex, hourly)', td.updated, url); add('low', td.lowH, 'Cardmarket (via TCGdex, hourly)', td.updated, url); }
-    else { add('avg30', td.avg30, 'Cardmarket (via TCGdex, hourly)', td.updated, url); add('trend', td.trend, 'Cardmarket (via TCGdex, hourly)', td.updated, url); add('low', td.low, 'Cardmarket (via TCGdex, hourly)', td.updated, url); }
+    const S_ = 'Cardmarket (via TCGdex, hourly)';
+    // Cardmarket's "-holo" columns are the reverse-holo/foil version of the product
+    if (rev) { add('trend', td.trendH, S_, td.updated); add('avg30', td.avg30H, S_, td.updated); add('avg7', td.avg7H, S_, td.updated); add('low', td.lowH, S_, td.updated); }
+    else { add('trend', td.trend, S_, td.updated); add('avg30', td.avg30, S_, td.updated); add('avg7', td.avg7, S_, td.updated); add('low', td.low, S_, td.updated); }
+  } else if (cm) {   // legacy: Pokémon TCG API prices (frozen since July 2026)
+    const S_ = 'Cardmarket (via Pokémon TCG API, no longer updated)';
+    if (rev) { add('trend', cm.rev, S_, cm.updated); add('avg30', cm.revAvg30, S_, cm.updated); add('avg7', cm.revAvg7, S_, cm.updated); add('low', cm.revLow, S_, cm.updated); }
+    else { add('trend', cm.trend ?? (cm.metric === 'trend' ? cm.value : null), S_, cm.updated); add('avg30', cm.avg30, S_, cm.updated); add('avg7', cm.avg7, S_, cm.updated); add('low', cm.low, S_, cm.updated); }
   }
   return out;
 }
@@ -390,7 +387,7 @@ function cmFigures(c, variant) {
 function cmTrend(c, variant) {
   const pr = c?.price || {}, rev = variant === 'reverse', cands = [];
   if (pr.td) cands.push({ a7:rev ? pr.td.avg7H : pr.td.avg7, a30:rev ? pr.td.avg30H : pr.td.avg30, d:pr.td.updated });
-  if (pr.cm) cands.push({ a7:rev ? pr.cm.revAvg7 : pr.cm.avg7, a30:rev ? pr.cm.revAvg30 : pr.cm.avg30, d:pr.cm.updated });
+  else if (pr.cm) cands.push({ a7:rev ? pr.cm.revAvg7 : pr.cm.avg7, a30:rev ? pr.cm.revAvg30 : pr.cm.avg30, d:pr.cm.updated });
   const t = cands.filter(x => x.a7 > 0 && x.a30 > 0).sort((x, y) => (y.d || '').localeCompare(x.d || ''))[0];
   if (!t) return null;
   const pct = Math.round((t.a7 - t.a30) / t.a30 * 100);
@@ -398,11 +395,11 @@ function cmTrend(c, variant) {
 }
 function pickCardmarket(c, variant) {
   const figs = cmFigures(c, variant); if (!figs.length) return null;
-  const want = PRICE_FIG[S.settings.priceFig] ? S.settings.priceFig : 'exlow';
+  const want = figPref();
   const best = list => list.sort((x, y) => (y.date || '').localeCompare(x.date || '') || (y.src.includes('TCGdex') - x.src.includes('TCGdex')))[0];   // newest; TCGdex wins ties
   let hit = best(figs.filter(f => f.fig === want && f.fresh)), status = 'good';
-  if (!hit) { for (const fb of ['avg30', 'trend', 'exlow']) { hit = best(figs.filter(f => f.fig === fb && f.fresh)); if (hit) break; } status = 'fallback'; }
-  if (!hit) { hit = best(figs.filter(f => f.fig === want)) || best(figs.filter(f => f.fig === 'avg30')) || best(figs.filter(f => f.fig === 'trend')) || best(figs); status = 'stale'; }
+  if (!hit) { for (const fb of FIG_FALLBACK) { hit = best(figs.filter(f => f.fig === fb && f.fresh)); if (hit) break; } status = 'fallback'; }
+  if (!hit) { hit = best(figs.filter(f => f.fig === want)) || FIG_FALLBACK.map(f => best(figs.filter(x => x.fig === f))).find(Boolean) || best(figs); status = 'stale'; }
   return { hit, status, want };
 }
 /* Price for a card, or for one printing of it (entries carry .variant; or pass one explicitly). */
@@ -412,7 +409,7 @@ function priceOf(c, variant = c?.variant) {
   if (pref !== 'tcgplayer' && (pr.cm || pr.td)) {
     const p = pickCardmarket(c, variant && variant !== 'any' ? variant : null);
     if (p) { const rate = fxRate('EUR'), h = p.hit;
-      return { gbp:rate ? h.value * rate : null, native:h.value, cur:'EUR', src:h.src, metric:PRICE_FIG[h.fig], fig:h.fig, want:p.want, date:h.date, url:h.url || pr.cm?.url || '',
+      return { gbp:rate ? h.value * rate : null, native:h.value, cur:'EUR', src:h.src, metric:PRICE_FIG[h.fig], fig:h.fig, want:p.want, date:h.date, url:cardmarketUrl(c),
         fetched:pr.td?.fetched && pr.td.fetched > (pr.fetched || '') ? pr.td.fetched : pr.fetched, status:p.status, stale:p.status === 'stale', fallback:p.status === 'fallback', trend:cmTrend(c, variant) }; }
   }
   const order = pref === 'tcgplayer' ? ['tcp','cm'] : ['cm','tcp'];
@@ -427,7 +424,7 @@ function priceOf(c, variant = c?.variant) {
     const age = q.updated ? (Date.now() - Date.parse(q.updated)) / 864e5 : Infinity;
     const st = age > CONFIG.priceStaleDays ? 'stale' : k !== order[0] ? 'fallback' : 'good';
     return { gbp:rate ? value * rate : null, native:value, cur, src:k === 'cm' ? 'Cardmarket' : 'TCGplayer', metric,
-      date:q.updated, url:q.url, fetched:pr.fetched, status:st, stale:st === 'stale', fallback:st === 'fallback', trend:null };
+      date:q.updated, url:k === 'cm' ? cardmarketUrl(c) : tcgplayerUrl(c), fetched:pr.fetched, status:st, stale:st === 'stale', fallback:st === 'fallback', trend:null };
   }
   return null;
 }
@@ -459,6 +456,9 @@ function recordSnapshot(col) {
   save();
 }
 const fmtPrice = pi => !pi ? '—' : pi.gbp != null ? GBP.format(pi.gbp) : NATIVE[pi.cur].format(pi.native);
+/* prices.pokemontcg.io redirect links no longer load, so link to each marketplace's own search instead. */
+const cardmarketUrl = c => c?.name ? `https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=${encodeURIComponent(c.name)}` : '';
+const tcgplayerUrl = c => c?.name ? `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(`${c.name} ${c.set_name || ''}`.trim())}` : '';
 const QUALITY = { good:'Good data', fallback:'Fallback figure', stale:'Stale price' };
 function qualityText(pi) {
   if (!pi) return 'No price available';
@@ -495,18 +495,19 @@ async function refreshPrices() {
   const ids = col.cardIds.filter(id => S.cards[id] && !S.cards[id].custom);
   if (!ids.length) { toast('No API cards to price', 'warn'); return; }
   const btns = $$('[data-act=refresh-prices]'); btns.forEach(b => b.disabled = true);
-  let done = 0, got = 0;
+  let done = 0;
   try {
-    for (let i = 0; i < ids.length; i += CONFIG.priceBatch) {
-      const batch = ids.slice(i, i + CONFIG.priceBatch);
-      $('#prog-value').textContent = `Refreshing prices… ${done} / ${ids.length}`;
-      const cards = await apiFetchAll('(' + batch.map(id => `id:"${id.replace(/"/g, '')}"`).join(' OR ') + ')');
-      cards.forEach(c => { mergeCard(c); if (c.price) got++; });
-      done += batch.length;
+    // 1) Cardmarket's hourly price guide via TCGdex (force a re-check of every card)
+    ids.forEach(id => { if (S.cards[id].price?.td) S.cards[id].price.td.fetched = ''; });
+    const tdGot = await tcgdexPrices(ids, (n, t) => { done = n; $('#prog-value').textContent = `Refreshing Cardmarket prices… ${n} / ${t}`; });
+    // 2) cards TCGdex can't match: try the Pokémon TCG API (old prices, flagged stale)
+    const missing = ids.filter(id => !S.cards[id].price?.td);
+    for (let i = 0; i < missing.length; i += CONFIG.priceBatch) {
+      $('#prog-value').textContent = `Checking ${missing.length} card(s) TCGdex couldn't price…`;
+      try { (await apiFetchAll('(' + missing.slice(i, i + CONFIG.priceBatch).map(id => `id:"${id.replace(/"/g, '')}"`).join(' OR ') + ')')).forEach(mergeCard); } catch { break; }
     }
-    const tdGot = await tcgdexPrices(ids, (n, t) => { $('#prog-value').textContent = `Checking hourly Cardmarket prices… ${n} / ${t}`; });
     await loadFx(); save(); render(); recordSnapshot(col); if (UI.view === 'sets') renderView();
-    toast(`Prices refreshed for ${got} of ${ids.length} cards${tdGot ? ` · ${tdGot} with hourly Cardmarket data` : ''}`, 'success');
+    toast(`Cardmarket prices refreshed for ${tdGot} of ${ids.length} cards${missing.length ? ` · ${missing.length} not found on TCGdex (shown with old prices, if any)` : ''}`, tdGot ? 'success' : 'warn');
   } catch (e) { render(); toast(`Price refresh stopped after ${done} cards: ${e.message}`, 'error'); }
   finally { btns.forEach(b => b.disabled = false); }
 }
@@ -848,18 +849,18 @@ function priceBoxHtml(c, variant) {
   const short = d => { const t = Date.parse(d); return t ? new Date(t).toLocaleDateString('en-GB', { day:'numeric', month:'short', ...(new Date(t).getFullYear() !== new Date().getFullYear() ? { year:'2-digit' } : {}) }) : '?'; };
   const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   const figs = cmFigures(c, variant), t = pi.trend;
-  const rows = ['exlow', 'avg30', 'trend', 'low'].map(f => { const list = figs.filter(x => x.fig === f).sort((x, y) => (y.date || '').localeCompare(x.date || ''));
+  const rows = ['trend', 'avg30', 'avg7', 'low'].map(f => { const list = figs.filter(x => x.fig === f).sort((x, y) => (y.date || '').localeCompare(x.date || ''));
     if (!list.length) return ''; const x = list[0];
-    return `<tr${pi.fig === f && pi.src === x.src ? ' class="pick"' : ''}><td>${esc(cap(PRICE_FIG[f]))}<span class="via">via ${x.src.includes('TCGdex') ? 'TCGdex (hourly)' : 'Pokémon TCG API'}</span></td><td>${eur(x.value)}</td><td title="${esc(x.date)}"><span class="pdot ${x.fresh ? 'good' : 'stale'}" aria-label="${x.fresh ? 'fresh' : 'stale'}"></span>${esc(short(x.date))}</td></tr>`; }).join('');
-  const tcp = pr.tcp ? `<div class="small muted">TCGplayer (US): ${NATIVE.USD.format(pr.tcp.value)} (${esc(pr.tcp.metric)}) · price date ${esc(pr.tcp.updated || '?')}${pr.tcp.url ? ` · <a href="${esc(safeUrl(pr.tcp.url))}" target="_blank" rel="noopener noreferrer">view</a>` : ''}</div>` : '';
-  const cmUrl = safeUrl(pr.cm?.url);
+    return `<tr${pi.fig === f && pi.src === x.src ? ' class="pick"' : ''}><td>${esc(cap(PRICE_FIG[f]))}<span class="via">via ${x.src.includes('TCGdex') ? 'TCGdex (hourly)' : 'Pokémon TCG API (frozen)'}</span></td><td>${eur(x.value)}</td><td title="${esc(x.date)}"><span class="pdot ${x.fresh ? 'good' : 'stale'}" aria-label="${x.fresh ? 'fresh' : 'stale'}"></span>${esc(short(x.date))}</td></tr>`; }).join('');
+  const tcp = pr.tcp ? `<div class="small muted">TCGplayer (US): ${NATIVE.USD.format(pr.tcp.value)} (${esc(pr.tcp.metric)}) · price date ${esc(pr.tcp.updated || '?')} · <a href="${esc(tcgplayerUrl(c))}" target="_blank" rel="noopener noreferrer">search TCGplayer</a></div>` : '';
+  const cmUrl = cardmarketUrl(c);
   return `<div class="pricebox">
     <div class="row" style="justify-content:space-between;align-items:baseline"><span class="big">${priceDot(pi)}${fmtPrice(pi)}${trendTag(pi)}</span><span class="small muted">${esc(pi.metric)}</span></div>
-    <div class="small qual ${pi.status}"><b>${QUALITY[pi.status]}.</b> ${pi.status === 'good' ? `Your chosen figure, price date ${esc(pi.date)}.` : pi.status === 'fallback' ? `${esc(cap(PRICE_FIG[pi.want] || 'your chosen figure'))} isn't available or is out of date, so this is the ${esc(pi.metric)} from ${esc(pi.date)}.` : `Newest price is from ${esc(pi.date || 'an unknown date')} — older than ${CONFIG.priceStaleDays} days. Tap refresh; treat it with care.`}
+    <div class="small qual ${pi.status}"><b>${QUALITY[pi.status]}.</b> ${pi.status === 'good' ? `Your chosen figure from Cardmarket's hourly price guide, dated ${esc(pi.date)}.` : pi.status === 'fallback' ? `${esc(cap(PRICE_FIG[pi.want] || 'your chosen figure'))} isn't available or is out of date, so this is the ${esc(pi.metric)} from ${esc(pi.date)}.` : (pi.src.includes('TCGdex') ? `Newest price is from ${esc(pi.date || 'an unknown date')} — older than ${CONFIG.priceStaleDays} days. Tap refresh; treat it with care.` : `TCGdex has no price for this card, so this is the old Pokémon TCG API figure from ${esc(pi.date || 'an unknown date')}. Treat it with care.`)}
       ${t ? ` Trend: 7-day average ${t.pct >= 0 ? '+' : ''}${t.pct}% vs 30-day.` : ''}</div>
     ${rows ? `<table class="ptable small"><thead><tr><th>Cardmarket</th><th>Price</th><th>Dated</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
     ${tcp}
-    <div class="row"><button class="btn sm" data-act="refresh-one">${ic('refresh', 'sm')}Refresh this price</button>${cmUrl ? `<a class="small" href="${esc(cmUrl)}" target="_blank" rel="noopener noreferrer">Open on Cardmarket</a>` : ''}</div></div>`;
+    <div class="row"><button class="btn sm" data-act="refresh-one">${ic('refresh', 'sm')}Refresh this price</button>${cmUrl ? `<a class="small" href="${esc(cmUrl)}" target="_blank" rel="noopener noreferrer" title="Searches Cardmarket for “${esc(c.name)}” — pick ${esc(c.set_name || 'the set')} ${esc(c.number || '')}">Find on Cardmarket</a>` : ''}</div></div>`;
 }
 
 /* ---------- TCGdex hourly Cardmarket prices ---------- */
@@ -881,24 +882,24 @@ async function tcgdexIdFor(c) {
   return null;
 }
 /* Fetch TCGdex prices for these cards (skips ones fetched in the last hour). Never throws; returns how many updated. */
-async function tcgdexPrices(ids, onProgress) {
-  if (S.settings.tcgdexPrices === false) return 0;
+async function tcgdexPrices(ids, onProgress, signal) {
   const todo = [...new Set(ids)].map(id => S.cards[id]).filter(c => c && !c.custom && !(c.price?.td?.fetched && Date.now() - Date.parse(c.price.td.fetched) < 36e5));
   let done = 0, got = 0;
   const work = async c => {
     try {
+      if (signal?.aborted) return;
       c.tdId ||= await tcgdexIdFor(c);
       if (c.tdId) {
-        const j = await tcgdexJson(`/cards/${encodeURIComponent(c.tdId)}`), cm = j?.pricing?.cardmarket;
+        const j = await tcgdexJson(`/cards/${encodeURIComponent(c.tdId)}`, signal), cm = j?.pricing?.cardmarket;
         if (cm) { const n = v => v > 0 ? +v : null;
           c.price ||= {}; c.price.td = { trend:n(cm.trend), avg1:n(cm.avg1), avg7:n(cm.avg7), avg30:n(cm.avg30), low:n(cm.low),
             trendH:n(cm['trend-holo']), avg7H:n(cm['avg7-holo']), avg30H:n(cm['avg30-holo']), lowH:n(cm['low-holo']),
-            updated:String(cm.updated || '').slice(0, 10), fetched:new Date().toISOString() }; got++; }
+            updated:String(cm.updated || '').slice(0, 10), fetched:new Date().toISOString() }; c.price.fetched = c.price.td.fetched; got++; }
       }
     } catch { /* offline or TCGdex down: keep what we have */ }
     onProgress?.(++done, todo.length);
   };
-  for (let i = 0; i < todo.length; i += 6) await Promise.all(todo.slice(i, i + 6).map(work));   // 6 at a time
+  for (let i = 0; i < todo.length && !signal?.aborted; i += 6) await Promise.all(todo.slice(i, i + 6).map(work));   // 6 at a time
   if (todo.length) save();
   return got;
 }
@@ -1552,7 +1553,7 @@ window.addEventListener('afterprint', () => { $('#print-root').innerHTML = ''; }
    ========================================================================== */
 async function openSettings() {
   $('#st-psrc').value = S.settings.priceSource || CONFIG.priceSource;
-  $('#st-pfig').value = PRICE_FIG[S.settings.priceFig] ? S.settings.priceFig : 'exlow'; $('#st-tdp').checked = S.settings.tcgdexPrices !== false;
+  $('#st-pfig').value = figPref();
   $('#st-theme').value = S.settings.theme || 'system';
   $('#st-where').textContent = location.origin + location.pathname.replace(/index\.html$/, '');
   $('#st-sw').textContent = navigator.serviceWorker?.controller ? 'checking…' : 'none (not installed for offline yet)';
@@ -1574,7 +1575,6 @@ function applyTheme() { const t = S.settings.theme; if (t === 'light' || t === '
 $('#st-theme').addEventListener('change', e => { S.settings.theme = e.target.value; save(); applyTheme(); });
 $('#st-psrc').addEventListener('change', e => { S.settings.priceSource = e.target.value; save(); render(); });
 $('#st-pfig').addEventListener('change', e => { if (PRICE_FIG[e.target.value]) { S.settings.priceFig = e.target.value; save(); render(); toast(`Prices now use the ${PRICE_FIG[e.target.value]}`, 'success'); } });
-$('#st-tdp').addEventListener('change', e => { S.settings.tcgdexPrices = e.target.checked; save(); render(); });
 ['EUR','USD'].forEach(cur => $('#st-fx-' + cur.toLowerCase()).addEventListener('change', e => {
   const v = parseFloat(e.target.value); S.settings.fx = { ...S.settings.fx, [cur]:v > 0 ? String(v) : '' }; save(); render();
   toast(v > 0 ? `Using your rate: £${v} per ${cur === 'EUR' ? '€' : '$'}1` : 'Back to the automatic ECB rate', 'success');
@@ -1971,7 +1971,7 @@ document.addEventListener('click', e => {
     case 'refresh-prices': refreshPrices(); break;
     case 'sort-value': e.stopPropagation(); UI.listSort = UI.listSort === 'value' ? 'binder' : 'value'; renderView(); break;
     case 'refresh-one': (async () => { const eid = UI.infoId, id = cardIdOf(eid);
-      try { const [c] = await apiFetchAll(`id:"${id}"`); if (c) { mergeCard(c); save(); } if (S.cards[id]?.price?.td) S.cards[id].price.td.fetched = ''; await tcgdexPrices([id]); await loadFx(); openInfo(eid); renderProgress(); toast(S.cards[id]?.price ? 'Price updated' : 'Still no price for this card', S.cards[id]?.price ? 'success' : 'warn'); }
+      try { if (S.cards[id]?.price?.td) S.cards[id].price.td.fetched = ''; await tcgdexPrices([id]); if (!S.cards[id]?.price?.td) { const [c] = await apiFetchAll(`id:"${id}"`).catch(() => []); if (c) mergeCard(c); } save(); await loadFx(); openInfo(eid); renderProgress(); toast(S.cards[id]?.price ? 'Price updated' : 'Still no price for this card', S.cards[id]?.price ? 'success' : 'warn'); }
       catch (err) { toast('Refresh failed: ' + err.message, 'error'); } })(); break;
     case 'share-want': shareRows(rowsFor(active(), 'needed')); break;
     case 'labels': openLabels(); break;

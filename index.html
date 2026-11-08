@@ -702,13 +702,13 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
     <fieldset><legend>Price figure</legend>
       <div class="grid2">
         <div><label class="f" for="st-pfig">Cardmarket figure to use</label>
-          <select id="st-pfig" class="inp"><option value="exlow">Lowest EX+ listing (recommended)</option><option value="avg30">30-day average</option><option value="trend">Trend</option><option value="low">Lowest listing, any condition</option></select></div>
-        <label class="chk" style="align-self:end"><input type="checkbox" id="st-tdp"><span>Also fetch hourly Cardmarket prices from TCGdex<small class="muted">Used as a fresh fallback when the Pokémon TCG API's prices are out of date.</small></span></label>
+          <select id="st-pfig" class="inp"><option value="trend">Trend (recommended)</option><option value="avg30">30-day average</option><option value="avg7">7-day average</option><option value="low">Lowest listing, any condition</option></select></div>
+        <p class="small muted" style="align-self:end;margin:0">From Cardmarket's official price guide, refreshed hourly via TCGdex. "Lowest listing" includes Poor copies.</p>
       </div>
       <ul class="small muted plegend">
-        <li><span class="pdot good"></span><b>Good</b> — your chosen figure, under 14 days old</li>
-        <li><span class="pdot fallback"></span><b>Fallback</b> — chosen figure missing or old, so a fresh 30-day average (or trend) is shown</li>
-        <li><span class="pdot stale"></span><b>Stale</b> — only old prices available; refresh, and treat with care</li>
+        <li><span class="pdot good"></span><b>Good</b> — your chosen figure, under 3 days old</li>
+        <li><span class="pdot fallback"></span><b>Fallback</b> — chosen figure missing, so another fresh figure is shown</li>
+        <li><span class="pdot stale"></span><b>Stale</b> — only old prices (or not on TCGdex); treat with care</li>
         <li><span class="ptrend up" style="margin:0 6px 0 0">▲</span><span class="ptrend down" style="margin:0 6px 0 0">▼</span>7-day average vs 30-day average (shown when it moves more than 5%)</li>
       </ul>
     </fieldset>

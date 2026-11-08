@@ -3,7 +3,7 @@
      upload shows up on the next launch instead of after GitHub's 10-minute HTTP cache; offline falls back to cache
    - Card images (images.pokemontcg.io): cache-first, capped
    - API calls: always network (the app keeps its own card cache in IndexedDB) */
-const VERSION = 'pb-v2.8.0';
+const VERSION = 'pb-v2.9.0';
 const SHELL = ['./', './index.html', './app.js', './vendor.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
 const IMG_CACHE = 'pb-img-v1';
 const IMG_MAX = 3000;   // ~30–60 MB of small card images

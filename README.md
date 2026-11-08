@@ -1,4 +1,4 @@
-# PokéBinder Studio v2.8
+# PokéBinder Studio v2.9
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -80,15 +80,15 @@ The Pokémon TCG API has **no artist** recorded for about 1,600 cards, including
 
 ## Prices (GBP)
 
-- **Source:** the Pokémon TCG API returns Cardmarket prices (EUR, the European market and the closest to the UK) and TCGplayer prices (USD, the US market). Neither is in GBP. Cardmarket is the default, and you can switch in Settings.
-- **Which Cardmarket figure (v2.8):** Settings → Price figure. The default is the **lowest Excellent-or-better listing** (Cardmarket's "EX+ low"), which is the closest free figure to "cheapest decent copy on sale". You can choose the 30-day average, trend, or lowest listing in any condition instead. TCGplayer uses the market price (falling back to mid), normal print first, then holo.
-- **Two Cardmarket sources:** the Pokémon TCG API (has the EX+ figure but can lag by months) and **TCGdex**, which republishes Cardmarket's official price guide every hour (no EX+ figure). Turn TCGdex prices off in Settings if you want.
-- **Status dots:** 🟢 **good** = your chosen figure, under 14 days old · 🟠 **fallback** = chosen figure missing or old, so a fresh 30-day average (then trend) is shown · 🔴 **stale** = only old prices exist. The ⓘ panel lists every figure, its date and which source it came from, with the one in use highlighted. Reverse holos have no EX+ figure, so they use the reverse-holo trend, 30-day average or low.
-- **Trend arrows:** ▲/▼ with a percentage when the 7-day average is more than 5% above or below the 30-day average (from the freshest source).
+- **Source (v2.9):** Cardmarket's official price guide (EUR), fetched per card from **TCGdex**, which republishes it every hour. The Pokémon TCG API's prices stopped updating on 1 July 2026, so they're only used for cards TCGdex can't match, and are always flagged stale. TCGplayer (USD) is still selectable in Settings but comes from the same frozen API.
+- **Which figure:** Settings → Price figure. Trend (default, Cardmarket's headline figure), 30-day average, 7-day average, or lowest listing. The lowest listing includes Poor copies, so it's often misleadingly low. There is no free condition-filtered figure.
+- **Status dots:** 🟢 **good** = your chosen figure, under 3 days old · 🟠 **fallback** = chosen figure missing, so another fresh figure (trend → 30-day → 7-day) is used · 🔴 **stale** = older than 3 days, or only the frozen API price exists. The ⓘ panel lists every figure with its date and source. Reverse holos use Cardmarket's reverse-holo columns.
+- **Trend arrows:** ▲/▼ with a percentage when the 7-day average is more than 5% above or below the 30-day average.
+- **Links:** "Find on Cardmarket" opens a Cardmarket search for the card name (the old prices.pokemontcg.io links no longer load). Pick the right set and number from the results.
 - **Conversion:** GBP is calculated using the ECB reference rate from Frankfurter (`CONFIG.fxUrl`, no key needed). The rate is cached for 12 hours, and you can override it in Settings. If no rate is available, prices show in EUR or USD rather than a guessed rate.
-- **Dates:** every price keeps the source's own **price date** (the date that source last updated it) and the date the app **fetched** it. Prices older than 14 days get a red dot.
+- **Dates:** every price keeps the source's own **price date** (the date that source last updated it) and the date the app **fetched** it. Prices older than 3 days get a red dot.
 - **Where prices appear:** a Value column in Checklist (tap the heading to sort high to low), a price panel in ⓘ, the value owned and to-complete under the progress bar, to-complete per set, the text want list and printed checklist, and nine CSV columns (`price_gbp`, `price_native`, `price_currency`, `price_source`, `price_metric`, `price_date`, `fx_gbp_per_unit`, `fx_source`, `price_fetched`).
-- **Refresh:** tap ↻ Refresh prices to re-pull prices for the current collection, 60 cards per API call, then hourly prices from TCGdex (6 at a time; cards checked in the last hour are skipped). One card can be refreshed from its ⓘ panel. The vendor screens do the same automatically before pricing.
+- **Refresh:** tap ↻ Refresh prices to re-check every card in the collection on TCGdex (6 at a time, so a 200-card collection takes a little while). Cards TCGdex can't match are then tried on the Pokémon TCG API. One card can be refreshed from its ⓘ panel. The vendor screens refresh automatically before pricing (cards checked in the last hour are skipped, 8-second limit, saved prices used if offline).
 - **Caveat:** these are free, scheduled syncs, not live listings. Live "cheapest Lightly Played copy right now" isn't available for free: Cardmarket's API isn't open to new applications and scraping breaks their terms. Treat prices as a guide, not a valuation.
 
 ## API key
