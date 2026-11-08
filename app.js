@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '2.6.0',
+  version: '2.8.0',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 4,           // for 429 / 5xx, exponential back-off
@@ -140,8 +140,11 @@ function normPrice(c) {
   if (cm?.prices) {
     const P = cm.prices;
     const hit = [['trend', P.trendPrice], ['30-day avg', P.avg30], ['avg sell', P.averageSellPrice], ['low', P.lowPrice]].find(([, v]) => v > 0);
-    if (hit) out.cm = { value:hit[1], metric:hit[0], low:P.lowPrice ?? null, avg30:P.avg30 ?? null, updated:d(cm.updatedAt), url:safeUrl(cm.url),
-      rev:[P.reverseHoloTrend, P.reverseHoloAvg30, P.reverseHoloSell].find(v => v > 0) ?? null };
+    const n = v => v > 0 ? +v : null;
+    if (hit) out.cm = { value:hit[1], metric:hit[0], low:n(P.lowPrice), avg30:n(P.avg30), avg7:n(P.avg7), avg1:n(P.avg1), trend:n(P.trendPrice),
+      exLow:n(P.lowPriceExPlus),   // lowest listing in Excellent or better — the preferred figure
+      updated:d(cm.updatedAt), url:safeUrl(cm.url),
+      rev:[P.reverseHoloTrend, P.reverseHoloAvg30, P.reverseHoloSell].find(v => v > 0) ?? null, revLow:n(P.reverseHoloLow), revAvg30:n(P.reverseHoloAvg30), revAvg7:n(P.reverseHoloAvg7) };
   }
   if (tp?.prices) {
     const pref = ['normal','holofoil','1stEditionHolofoil','1stEditionNormal','unlimitedHolofoil','reverseHolofoil'];
@@ -354,10 +357,64 @@ function fxLabel(cur) {
   return S.fx ? `£${(cur === 'EUR' ? S.fx.eur : S.fx.usd).toFixed(4)} per ${cur === 'EUR' ? '€' : '$'}1, ECB ${S.fx.date}` : 'no exchange rate yet';
 }
 /* → { gbp, native, cur, src, metric, date, url, fetched, stale, fallback } or null */
+/* ---------- price figures, data quality and trend ----------
+   Cardmarket figures can come from two places:
+     · the Pokémon TCG API (card data + Cardmarket price guide, incl. "lowest Excellent-or-better listing") — can lag by months
+     · TCGdex (Cardmarket's official price guide, refreshed hourly) — no condition-filtered figure
+   We use the figure you choose (default: lowest EX+ listing) from the freshest source, and say how good it is:
+     good     = your chosen figure, price date within CONFIG.priceStaleDays
+     fallback = chosen figure unavailable/stale, so a fresh 30-day average (or trend) is used instead
+     stale    = only old data exists — shown, but flagged red */
+const PRICE_FIG = { exlow:'lowest EX+ listing', avg30:'30-day average', trend:'trend', low:'lowest listing (any condition)' };
+const isFresh = d => !!d && (Date.now() - Date.parse(d)) / 864e5 <= CONFIG.priceStaleDays;
+function cmFigures(c, variant) {
+  const pr = c?.price || {}, cm = pr.cm, td = pr.td, rev = variant === 'reverse', out = [];
+  const add = (fig, value, src, date, url) => { if (value > 0) out.push({ fig, value:+value, src, date:date || '', url:url || '', fresh:isFresh(date) }); };
+  if (cm) {
+    if (rev) { add('trend', cm.rev, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url); add('avg30', cm.revAvg30, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url); add('low', cm.revLow, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url); }
+    else {
+      add('exlow', cm.exLow, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url);
+      add('avg30', cm.avg30, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url);
+      add('trend', cm.trend ?? (cm.metric === 'trend' ? cm.value : null), 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url);
+      add('low', cm.low, 'Cardmarket (via Pokémon TCG API)', cm.updated, cm.url);
+    }
+  }
+  if (td) {
+    const url = td.idProduct ? '' : '';
+    if (rev) { add('avg30', td.avg30H, 'Cardmarket (via TCGdex, hourly)', td.updated, url); add('trend', td.trendH, 'Cardmarket (via TCGdex, hourly)', td.updated, url); add('low', td.lowH, 'Cardmarket (via TCGdex, hourly)', td.updated, url); }
+    else { add('avg30', td.avg30, 'Cardmarket (via TCGdex, hourly)', td.updated, url); add('trend', td.trend, 'Cardmarket (via TCGdex, hourly)', td.updated, url); add('low', td.low, 'Cardmarket (via TCGdex, hourly)', td.updated, url); }
+  }
+  return out;
+}
+/* 7-day vs 30-day average from the freshest source: ▲ / ▼ when they differ by more than 5%. */
+function cmTrend(c, variant) {
+  const pr = c?.price || {}, rev = variant === 'reverse', cands = [];
+  if (pr.td) cands.push({ a7:rev ? pr.td.avg7H : pr.td.avg7, a30:rev ? pr.td.avg30H : pr.td.avg30, d:pr.td.updated });
+  if (pr.cm) cands.push({ a7:rev ? pr.cm.revAvg7 : pr.cm.avg7, a30:rev ? pr.cm.revAvg30 : pr.cm.avg30, d:pr.cm.updated });
+  const t = cands.filter(x => x.a7 > 0 && x.a30 > 0).sort((x, y) => (y.d || '').localeCompare(x.d || ''))[0];
+  if (!t) return null;
+  const pct = Math.round((t.a7 - t.a30) / t.a30 * 100);
+  return { pct, dir:pct > 5 ? 'up' : pct < -5 ? 'down' : 'flat', fresh:isFresh(t.d) };
+}
+function pickCardmarket(c, variant) {
+  const figs = cmFigures(c, variant); if (!figs.length) return null;
+  const want = PRICE_FIG[S.settings.priceFig] ? S.settings.priceFig : 'exlow';
+  const best = list => list.sort((x, y) => (y.date || '').localeCompare(x.date || '') || (y.src.includes('TCGdex') - x.src.includes('TCGdex')))[0];   // newest; TCGdex wins ties
+  let hit = best(figs.filter(f => f.fig === want && f.fresh)), status = 'good';
+  if (!hit) { for (const fb of ['avg30', 'trend', 'exlow']) { hit = best(figs.filter(f => f.fig === fb && f.fresh)); if (hit) break; } status = 'fallback'; }
+  if (!hit) { hit = best(figs.filter(f => f.fig === want)) || best(figs.filter(f => f.fig === 'avg30')) || best(figs.filter(f => f.fig === 'trend')) || best(figs); status = 'stale'; }
+  return { hit, status, want };
+}
 /* Price for a card, or for one printing of it (entries carry .variant; or pass one explicitly). */
 function priceOf(c, variant = c?.variant) {
   const pr = c?.price; if (!pr) return null;
   const pref = S.settings.priceSource || CONFIG.priceSource;
+  if (pref !== 'tcgplayer' && (pr.cm || pr.td)) {
+    const p = pickCardmarket(c, variant && variant !== 'any' ? variant : null);
+    if (p) { const rate = fxRate('EUR'), h = p.hit;
+      return { gbp:rate ? h.value * rate : null, native:h.value, cur:'EUR', src:h.src, metric:PRICE_FIG[h.fig], fig:h.fig, want:p.want, date:h.date, url:h.url || pr.cm?.url || '',
+        fetched:pr.td?.fetched && pr.td.fetched > (pr.fetched || '') ? pr.td.fetched : pr.fetched, status:p.status, stale:p.status === 'stale', fallback:p.status === 'fallback', trend:cmTrend(c, variant) }; }
+  }
   const order = pref === 'tcgplayer' ? ['tcp','cm'] : ['cm','tcp'];
   for (const k of order) {
     const q = pr[k]; if (!q || !(q.value > 0)) continue;
@@ -368,8 +425,9 @@ function priceOf(c, variant = c?.variant) {
     }
     const cur = k === 'cm' ? 'EUR' : 'USD', rate = fxRate(cur);
     const age = q.updated ? (Date.now() - Date.parse(q.updated)) / 864e5 : Infinity;
+    const st = age > CONFIG.priceStaleDays ? 'stale' : k !== order[0] ? 'fallback' : 'good';
     return { gbp:rate ? value * rate : null, native:value, cur, src:k === 'cm' ? 'Cardmarket' : 'TCGplayer', metric,
-      date:q.updated, url:q.url, fetched:pr.fetched, stale:age > CONFIG.priceStaleDays, fallback:k !== order[0] };
+      date:q.updated, url:q.url, fetched:pr.fetched, status:st, stale:st === 'stale', fallback:st === 'fallback', trend:null };
   }
   return null;
 }
@@ -401,6 +459,15 @@ function recordSnapshot(col) {
   save();
 }
 const fmtPrice = pi => !pi ? '—' : pi.gbp != null ? GBP.format(pi.gbp) : NATIVE[pi.cur].format(pi.native);
+const QUALITY = { good:'Good data', fallback:'Fallback figure', stale:'Stale price' };
+function qualityText(pi) {
+  if (!pi) return 'No price available';
+  const base = `${pi.metric} · ${pi.src} · price date ${pi.date || 'unknown'}`;
+  return pi.status === 'good' ? `Good data: ${base}` : pi.status === 'fallback' ? `Fallback: ${pi.want ? PRICE_FIG[pi.want] + ' not available or out of date, using ' : ''}${base}` : `Stale: ${base} — older than ${CONFIG.priceStaleDays} days`;
+}
+const priceDot = pi => pi ? `<span class="pdot ${pi.status}" role="img" aria-label="${esc(QUALITY[pi.status])}" title="${esc(qualityText(pi))}"></span>` : '';
+const trendTag = pi => { const t = pi?.trend; if (!t || t.dir === 'flat') return ''; return `<span class="ptrend ${t.dir}" title="7-day average is ${Math.abs(t.pct)}% ${t.dir === 'up' ? 'above' : 'below'} the 30-day average" aria-label="trending ${t.dir} ${Math.abs(t.pct)}%">${t.dir === 'up' ? '▲' : '▼'}${Math.abs(t.pct)}%</span>`; };
+const priceHtml = pi => pi ? `<span class="pwrap">${priceDot(pi)}${fmtPrice(pi)}${trendTag(pi)}</span>` : '—';
 const priceTitle = pi => !pi ? 'No price in the API' : `${pi.src} ${pi.metric}: ${NATIVE[pi.cur].format(pi.native)} · price date ${pi.date || 'unknown'}${pi.stale ? ' (stale)' : ''} · ${fxLabel(pi.cur)}`;
 function sumValue(cards) {
   let gbp = 0, priced = 0, unconverted = 0, minD = '', maxD = '';
@@ -437,8 +504,9 @@ async function refreshPrices() {
       cards.forEach(c => { mergeCard(c); if (c.price) got++; });
       done += batch.length;
     }
+    const tdGot = await tcgdexPrices(ids, (n, t) => { $('#prog-value').textContent = `Checking hourly Cardmarket prices… ${n} / ${t}`; });
     await loadFx(); save(); render(); recordSnapshot(col); if (UI.view === 'sets') renderView();
-    toast(`Prices refreshed for ${got} of ${ids.length} cards`, 'success');
+    toast(`Prices refreshed for ${got} of ${ids.length} cards${tdGot ? ` · ${tdGot} with hourly Cardmarket data` : ''}`, 'success');
   } catch (e) { render(); toast(`Price refresh stopped after ${done} cards: ${e.message}`, 'error'); }
   finally { btns.forEach(b => b.disabled = false); }
 }
@@ -466,7 +534,8 @@ function renderProgress() {
   if (t.withPaid) { pl.textContent = (t.pl >= 0 ? '+' : '−') + GBP.format(Math.abs(t.pl)); pl.className = 'v ' + (t.pl >= 0 ? 'up' : 'down');
     $('#sv-pl-s').textContent = `on ${t.withPaid} cop${t.withPaid === 1 ? 'y' : 'ies'} · paid ${GBP.format(t.paid)}`; }
   else { pl.textContent = '—'; pl.className = 'v'; $('#sv-pl-s').textContent = 'Add what you paid in card details'; }
-  $('#prog-value').textContent = all.priced ? `${src} prices · price dates ${dateRange(all)}` : (all.unconverted ? 'Prices loaded but no exchange rate yet — check Settings' : 'No prices yet');
+  const q = { good:0, fallback:0, stale:0 }; base.forEach(e => { const pi = priceOf(e); if (pi) q[pi.status]++; });
+  $('#prog-value').innerHTML = all.priced ? `${esc(src)} · <span class="pwrap" title="Your chosen figure, under ${CONFIG.priceStaleDays} days old"><span class="pdot good"></span>${q.good} good</span> · <span class="pwrap" title="Fresh fallback figure"><span class="pdot fallback"></span>${q.fallback} fallback</span> · <span class="pwrap" title="Only old prices — refresh"><span class="pdot stale"></span>${q.stale} stale</span>` : (all.unconverted ? 'Prices loaded but no exchange rate yet — check Settings' : 'No prices yet');
 }
 
 function renderView() {
@@ -534,7 +603,7 @@ function listHtml(col) {
         <td><span class="nm">${c.variant && VSHORT[c.variant] ? `<span class="vtag">${VSHORT[c.variant]}</span> ` : ''}${esc(c.name)}</span><span class="sub">${esc(c.number)} · ${esc(c.set_name)}${c.rarity ? ' · ' + esc(c.rarity) : ''}${q > 1 ? ` · ×${q}` : ''}</span></td>
         <td class="hide-m mono">${esc(c.number)}</td><td class="hide-m">${esc(c.set_name)}</td><td class="hide-m mono small">${esc(c.release_date || '—')}</td>
         <td class="hide-m small">${esc(c.rarity || '—')}</td><td class="hide-m small num">${q || '—'}</td>
-        <td class="price small${pi?.stale ? ' stale' : ''}" title="${esc(priceTitle(pi))}">${fmtPrice(pi)}</td>
+        <td class="price small" title="${esc(qualityText(pi))}">${priceHtml(pi)}</td>
         <td class="mono small" title="${esc(posLabel(col, p))}">${p ? `p${p.page}·${p.slot}` : '—'}</td>
         <td><button class="btn sm ghost icon" data-act="info" aria-label="Details for ${esc(dispName(c))}">${ic('info')}</button></td></tr>`; }).join('')}
     </tbody></table></div></div>`;
@@ -729,7 +798,7 @@ function openInfo(entryId) {
       <div class="row" style="justify-content:space-between"><b>Your copies</b><span class="small muted">${t.copies ? `${t.copies} held${spares.length ? ` · ${spares.reduce((n, s) => n + s.n, 0)} spare` : ''}${t.value ? ` · worth ${GBP.format(t.value)}` : ''}${t.withPaid ? ` · <span class="${t.pl >= 0 ? 'up' : 'down'}">${t.pl >= 0 ? '+' : '−'}${GBP.format(Math.abs(t.pl))}</span>` : ''}` : 'None yet'}</span></div>
       ${vlist.map(v => { const r = rec[v] || {}, pv = priceOf(c, v === 'any' ? primaryVariant(c, col) : v);
         return `<div class="inv-row" data-v="${v}">
-          <div><span class="vn">${VARIANTS[v]}</span>${pv ? ` <span class="small muted">· ${fmtPrice(pv)} each</span>` : ''}</div>
+          <div><span class="vn">${VARIANTS[v]}</span>${pv ? ` <span class="small muted">· ${priceHtml(pv)} each</span>` : ''}</div>
           <div class="stepper" role="group" aria-label="${VARIANTS[v]} quantity"><button type="button" data-q="-1" aria-label="One fewer">${ic('minus', 'sm')}</button><output>${r.q || 0}</output><button type="button" data-q="1" aria-label="One more">${ic('plus', 'sm')}</button></div>
           <div class="more">
             <select class="inp" data-f="c" aria-label="${VARIANTS[v]} condition"><option value="">Condition</option>${CONDITIONS.map(k => `<option${r.c === k ? ' selected' : ''}>${k}</option>`).join('')}</select>
@@ -773,14 +842,65 @@ $('#i-remove').addEventListener('click', () => {
 
 function priceBoxHtml(c, variant) {
   if (c.custom) return '';
-  const pi = priceOf(c, variant), pr = c.price;
+  const pi = priceOf(c, variant), pr = c.price || {};
   if (!pi) return `<div class="pricebox"><span class="muted">No price in the API for this card.</span><button class="btn sm" data-act="refresh-one" style="justify-self:start">${ic('refresh', 'sm')}Check again</button></div>`;
-  const line = (k, label, cur) => { const q = pr[k]; if (!q) return ''; const r = fxRate(cur), u = safeUrl(q.url);
-    return `<div class="small">${label}: <span class="price">${NATIVE[cur].format(q.value)}</span>${r ? ` ≈ <span class="price">${GBP.format(q.value * r)}</span>` : ''} <span class="muted">(${esc(q.metric)}${q.low ? `, low ${NATIVE[cur].format(q.low)}` : ''})</span> · price date <b>${esc(q.updated || '?')}</b>${u ? ` · <a href="${esc(u)}" target="_blank" rel="noopener noreferrer">view</a>` : ''}</div>`; };
-  return `<div class="pricebox"><div><span class="big">${fmtPrice(pi)}</span> <span class="small muted">${pi.src} ${esc(pi.metric)}${pi.fallback ? ' (preferred source has no price)' : ''}</span></div>
-    <div class="small${pi.stale ? ' stale' : ''}">Price date ${esc(pi.date || 'unknown')}${pi.stale ? ` — older than ${CONFIG.priceStaleDays} days, tap refresh` : ''} · fetched ${new Date(pi.fetched).toLocaleDateString('en-GB')} · ${esc(fxLabel(pi.cur))}</div>
-    ${line('cm', 'Cardmarket (EU)', 'EUR')}${line('tcp', 'TCGplayer (US)', 'USD')}
-    <button class="btn sm" data-act="refresh-one" style="justify-self:start">${ic('refresh', 'sm')}Refresh this price</button></div>`;
+  const r = fxRate('EUR'), eur = v => `${NATIVE.EUR.format(v)}${r ? `<span class="gbp">≈ ${GBP.format(v * r)}</span>` : ''}`;
+  const short = d => { const t = Date.parse(d); return t ? new Date(t).toLocaleDateString('en-GB', { day:'numeric', month:'short', ...(new Date(t).getFullYear() !== new Date().getFullYear() ? { year:'2-digit' } : {}) }) : '?'; };
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  const figs = cmFigures(c, variant), t = pi.trend;
+  const rows = ['exlow', 'avg30', 'trend', 'low'].map(f => { const list = figs.filter(x => x.fig === f).sort((x, y) => (y.date || '').localeCompare(x.date || ''));
+    if (!list.length) return ''; const x = list[0];
+    return `<tr${pi.fig === f && pi.src === x.src ? ' class="pick"' : ''}><td>${esc(cap(PRICE_FIG[f]))}<span class="via">via ${x.src.includes('TCGdex') ? 'TCGdex (hourly)' : 'Pokémon TCG API'}</span></td><td>${eur(x.value)}</td><td title="${esc(x.date)}"><span class="pdot ${x.fresh ? 'good' : 'stale'}" aria-label="${x.fresh ? 'fresh' : 'stale'}"></span>${esc(short(x.date))}</td></tr>`; }).join('');
+  const tcp = pr.tcp ? `<div class="small muted">TCGplayer (US): ${NATIVE.USD.format(pr.tcp.value)} (${esc(pr.tcp.metric)}) · price date ${esc(pr.tcp.updated || '?')}${pr.tcp.url ? ` · <a href="${esc(safeUrl(pr.tcp.url))}" target="_blank" rel="noopener noreferrer">view</a>` : ''}</div>` : '';
+  const cmUrl = safeUrl(pr.cm?.url);
+  return `<div class="pricebox">
+    <div class="row" style="justify-content:space-between;align-items:baseline"><span class="big">${priceDot(pi)}${fmtPrice(pi)}${trendTag(pi)}</span><span class="small muted">${esc(pi.metric)}</span></div>
+    <div class="small qual ${pi.status}"><b>${QUALITY[pi.status]}.</b> ${pi.status === 'good' ? `Your chosen figure, price date ${esc(pi.date)}.` : pi.status === 'fallback' ? `${esc(cap(PRICE_FIG[pi.want] || 'your chosen figure'))} isn't available or is out of date, so this is the ${esc(pi.metric)} from ${esc(pi.date)}.` : `Newest price is from ${esc(pi.date || 'an unknown date')} — older than ${CONFIG.priceStaleDays} days. Tap refresh; treat it with care.`}
+      ${t ? ` Trend: 7-day average ${t.pct >= 0 ? '+' : ''}${t.pct}% vs 30-day.` : ''}</div>
+    ${rows ? `<table class="ptable small"><thead><tr><th>Cardmarket</th><th>Price</th><th>Dated</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
+    ${tcp}
+    <div class="row"><button class="btn sm" data-act="refresh-one">${ic('refresh', 'sm')}Refresh this price</button>${cmUrl ? `<a class="small" href="${esc(cmUrl)}" target="_blank" rel="noopener noreferrer">Open on Cardmarket</a>` : ''}</div></div>`;
+}
+
+/* ---------- TCGdex hourly Cardmarket prices ---------- */
+const PT_TO_TD = (() => { const m = {}; for (const [td, pt] of Object.entries(TCGDEX_SET_MAP)) (m[pt] ||= []).push(td); return m; })();
+const normNo = n => String(n || '').toUpperCase().replace(/^([A-Z]*)0+(?=\d)/, '$1');
+async function tdSetIndex(tdSet) {
+  S.tdIndex ||= {};
+  const hit = S.tdIndex[tdSet]; if (hit && Date.now() - hit.ts < 7 * 864e5) return hit.m;
+  const j = await tcgdexJson(`/sets/${encodeURIComponent(tdSet)}`); if (!j?.cards) return null;
+  const m = {}; for (const c of j.cards) if (c?.id && c.localId != null) m[normNo(c.localId)] = { id:String(c.id), name:String(c.name || '') };
+  S.tdIndex[tdSet] = { ts:Date.now(), m }; return m;
+}
+async function tcgdexIdFor(c) {
+  const sets = [...(PT_TO_TD[c.set_id] || []), ...Object.entries(S.tcgdexSetMap || {}).filter(([, pt]) => pt === c.set_id).map(([td]) => td)];
+  for (const td of [...new Set(sets)]) {
+    const m = await tdSetIndex(td).catch(() => null); const e = m?.[normNo(c.number)];
+    if (e && normName(e.name) === normName(c.name)) return e.id;   // same card name on both sides, or no match
+  }
+  return null;
+}
+/* Fetch TCGdex prices for these cards (skips ones fetched in the last hour). Never throws; returns how many updated. */
+async function tcgdexPrices(ids, onProgress) {
+  if (S.settings.tcgdexPrices === false) return 0;
+  const todo = [...new Set(ids)].map(id => S.cards[id]).filter(c => c && !c.custom && !(c.price?.td?.fetched && Date.now() - Date.parse(c.price.td.fetched) < 36e5));
+  let done = 0, got = 0;
+  const work = async c => {
+    try {
+      c.tdId ||= await tcgdexIdFor(c);
+      if (c.tdId) {
+        const j = await tcgdexJson(`/cards/${encodeURIComponent(c.tdId)}`), cm = j?.pricing?.cardmarket;
+        if (cm) { const n = v => v > 0 ? +v : null;
+          c.price ||= {}; c.price.td = { trend:n(cm.trend), avg1:n(cm.avg1), avg7:n(cm.avg7), avg30:n(cm.avg30), low:n(cm.low),
+            trendH:n(cm['trend-holo']), avg7H:n(cm['avg7-holo']), avg30H:n(cm['avg30-holo']), lowH:n(cm['low-holo']),
+            updated:String(cm.updated || '').slice(0, 10), fetched:new Date().toISOString() }; got++; }
+      }
+    } catch { /* offline or TCGdex down: keep what we have */ }
+    onProgress?.(++done, todo.length);
+  };
+  for (let i = 0; i < todo.length; i += 6) await Promise.all(todo.slice(i, i + 6).map(work));   // 6 at a time
+  if (todo.length) save();
+  return got;
 }
 
 /* ---------- API search ---------- */
@@ -846,6 +966,8 @@ function mergeCard(c) {
   if (!c.artist && old?.artist) { m.artist = old.artist; }
   else if (c.artist && !ours) { delete m.artist_assigned; delete m.artist_tcgdex; }
   if (!c.price && old?.price) m.price = old.price;
+  else if (c.price && old?.price?.td) m.price = { ...c.price, td:old.price.td };
+  if (old?.tdId && !m.tdId) m.tdId = old.tdId;
   S.cards[c.id] = m;
 }
 const artistSource = c => c.artist_assigned ? 'assigned by you' : c.artist_tcgdex ? 'TCGdex' : (c.artist ? 'API' : '');
@@ -1274,6 +1396,7 @@ function sanitizeCard(k, c) {
     series:str(c.series, 60), release_date:/^\d{4}-\d{2}-\d{2}$/.test(c.release_date) ? c.release_date : '', artist:str(c.artist, 80), rarity:str(c.rarity, 60),
     dex:numOr(c.dex), supertype:str(c.supertype, 20), img_s:safeUrl(c.img_s), img_l:safeUrl(c.img_l), custom:!!c.custom };
   if (c.artist_assigned) out.artist_assigned = true; if (c.artist_tcgdex) out.artist_tcgdex = true;
+  if (typeof c.tdId === 'string' && /^[A-Za-z0-9.-]{1,40}$/.test(c.tdId)) out.tdId = c.tdId;
   if (Array.isArray(c.variants)) out.variants = c.variants.filter(v => ['normal','holo','reverse','first'].includes(v));
   const pr = c.price;
   if (pr && typeof pr === 'object') {
@@ -1281,7 +1404,11 @@ function sanitizeCard(k, c) {
       updated:/^\d{4}-\d{2}-\d{2}$/.test(q.updated) ? q.updated : '', url:safeUrl(q.url),
       ...(q.vars && typeof q.vars === 'object' ? { vars:Object.fromEntries(Object.entries(q.vars).filter(([v, x]) => VARIANTS[v] && x > 0).map(([v, x]) => [v, +x])) } : {}) } : undefined;
     const cm = sp(pr.cm), tcp = sp(pr.tcp);
-    if (cm || tcp) out.price = { ...(cm ? { cm } : {}), ...(tcp ? { tcp } : {}), fetched:str(pr.fetched, 30) || new Date().toISOString() };
+    if (cm && pr.cm) for (const k of ['avg7', 'avg1', 'trend', 'exLow', 'revLow', 'revAvg30', 'revAvg7']) cm[k] = numOr(pr.cm[k]) > 0 ? +pr.cm[k] : null;
+    let td = null;
+    if (pr.td && typeof pr.td === 'object') { td = {}; for (const k of ['trend', 'avg1', 'avg7', 'avg30', 'low', 'trendH', 'avg7H', 'avg30H', 'lowH']) td[k] = numOr(pr.td[k]) > 0 && pr.td[k] < 1e6 ? +pr.td[k] : null;
+      td.updated = /^\d{4}-\d{2}-\d{2}$/.test(pr.td.updated) ? pr.td.updated : ''; td.fetched = str(pr.td.fetched, 30); }
+    if (cm || tcp || td) out.price = { ...(cm ? { cm } : {}), ...(tcp ? { tcp } : {}), ...(td ? { td } : {}), fetched:str(pr.fetched, 30) || new Date().toISOString() };
   }
   return out;
 }
@@ -1425,6 +1552,7 @@ window.addEventListener('afterprint', () => { $('#print-root').innerHTML = ''; }
    ========================================================================== */
 async function openSettings() {
   $('#st-psrc').value = S.settings.priceSource || CONFIG.priceSource;
+  $('#st-pfig').value = PRICE_FIG[S.settings.priceFig] ? S.settings.priceFig : 'exlow'; $('#st-tdp').checked = S.settings.tcgdexPrices !== false;
   $('#st-theme').value = S.settings.theme || 'system';
   $('#st-where').textContent = location.origin + location.pathname.replace(/index\.html$/, '');
   $('#st-sw').textContent = navigator.serviceWorker?.controller ? 'checking…' : 'none (not installed for offline yet)';
@@ -1445,6 +1573,8 @@ $('#st-key').addEventListener('change', e => { S.settings.apiKey = e.target.valu
 function applyTheme() { const t = S.settings.theme; if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
 $('#st-theme').addEventListener('change', e => { S.settings.theme = e.target.value; save(); applyTheme(); });
 $('#st-psrc').addEventListener('change', e => { S.settings.priceSource = e.target.value; save(); render(); });
+$('#st-pfig').addEventListener('change', e => { if (PRICE_FIG[e.target.value]) { S.settings.priceFig = e.target.value; save(); render(); toast(`Prices now use the ${PRICE_FIG[e.target.value]}`, 'success'); } });
+$('#st-tdp').addEventListener('change', e => { S.settings.tcgdexPrices = e.target.checked; save(); render(); });
 ['EUR','USD'].forEach(cur => $('#st-fx-' + cur.toLowerCase()).addEventListener('change', e => {
   const v = parseFloat(e.target.value); S.settings.fx = { ...S.settings.fx, [cur]:v > 0 ? String(v) : '' }; save(); render();
   toast(v > 0 ? `Using your rate: £${v} per ${cur === 'EUR' ? '€' : '$'}1` : 'Back to the automatic ECB rate', 'success');
@@ -1493,7 +1623,7 @@ async function buildShareUrl(rows, withPrices = true, kind) {
   const cols = [...new Set(rows.map(r => r.col.name))];
   const payload = { v:1, k:kind, n:cols.length === 1 ? cols[0] : 'Several collections', d:today(),
     a:rows.slice(0, 1500).map(({ c, sp, price }) => { const g = !withPrices ? null : price != null ? price : priceOf(c)?.gbp;
-      return [c.cardId || c.id, c.name, c.number, c.set_id, c.set_name, c.variant || '', kind === 'trade' || kind === 'sale' ? sp || 1 : 1, g != null ? Math.round(g * 100) / 100 : null, c.rarity || '']; }) };
+      return [c.cardId || c.id, c.name, c.number, c.set_id, c.set_name, c.variant || '', kind === 'trade' || kind === 'sale' ? sp || 1 : 1, g != null ? Math.round(g * 100) / 100 : null, c.rarity || '', c.lang && c.lang !== 'en' ? c.lang : '']; }) };
   const json = new TextEncoder().encode(JSON.stringify(payload));
   let token;
   if ('CompressionStream' in window) token = '1.' + b64u(await pipeBytes(json, new CompressionStream('deflate-raw')));
@@ -1527,7 +1657,7 @@ async function decodeShare(token) {
   for (const r of j.a.slice(0, 1500)) {
     if (!Array.isArray(r) || !ID_RE.test(r[0]) || BAD_KEYS.has(r[0])) continue;
     items.push({ id:r[0], name:str(r[1], 120) || '?', number:str(r[2], 20), set_id:str(r[3], 40), set_name:str(r[4], 100), variant:VARIANTS[r[5]] ? r[5] : '',
-      n:Math.max(1, Math.min(999, Math.floor(numOr(r[6], 1)))), gbp:numOr(r[7]) != null && r[7] >= 0 && r[7] < 1e6 ? r[7] : null, rarity:str(r[8], 60) });
+      n:Math.max(1, Math.min(999, Math.floor(numOr(r[6], 1)))), gbp:numOr(r[7]) != null && r[7] >= 0 && r[7] < 1e6 ? r[7] : null, rarity:str(r[8], 60), lang:LANGS[r[9]] ? r[9] : '' });
   }
   return { kind:['want','trade','list','sale'].includes(j.k) ? j.k : 'list', name:str(j.n, 80) || 'A collection', date:/^\d{4}-\d{2}-\d{2}$/.test(j.d) ? j.d : '', items };
 }
@@ -1549,7 +1679,7 @@ async function openShare(token) {
   const title = data.kind === 'want' ? 'Want list' : data.kind === 'trade' ? 'Trade list' : data.kind === 'sale' ? 'Cards for sale' : 'Card list';
   const total = data.items.reduce((n, i) => n + (i.gbp || 0) * i.n, 0), priced = data.items.some(i => i.gbp != null);
   const groups = new Map(); data.items.forEach(i => { if (!groups.has(i.set_id)) groups.set(i.set_id, []); groups.get(i.set_id).push(i); });
-  const label = i => i.name + (i.variant && i.variant !== 'normal' ? ` (${VARIANTS[i.variant]})` : '');
+  const label = i => i.name + (i.variant && i.variant !== 'normal' ? ` (${VARIANTS[i.variant]})` : '') + (i.lang && i.lang !== 'en' ? ` · ${LANGS[i.lang]}` : '');
   UI.shareText = `${data.name} — ${title}${data.date ? ` (${data.date})` : ''}\n` + [...groups.values()].map(g => `\n${g[0].set_name}\n` + g.map(i => `  ${i.n > 1 ? i.n + '× ' : ''}${i.number.padEnd(7)} ${label(i)}${i.gbp != null ? ' · ' + GBP.format(i.gbp) : ''}`).join('\n')).join('\n') + '\n';
   $('#share-view').innerHTML = `
     <div class="share-head"><span class="small muted">${ic('link', 'sm')} Shared from PokéBinder Studio</span>
@@ -1586,7 +1716,7 @@ const lblKey = it => it.lotId ? `lot:${it.lotId}` : `${it.id}|${it.v || ''}`;
 function labelSource(src) {
   const col = active(); if (!col && src !== 'stock' && src !== 'give') return [];
   const out = [];
-  if (src === 'stock') Object.values(S.stock).forEach(l => out.push({ id:l.cardId, v:l.v, n:l.q, lotId:l.id }));
+  if (src === 'stock') Object.values(S.stock).forEach(l => out.push({ id:l.cardId, v:l.v, n:l.q, lotId:l.id, lang:langOf(l) }));
   else if (src === 'give') S.vendor.give.forEach(t => out.push({ id:t.id, v:t.v, n:t.q }));
   else if (src === 'filter') UI.layout.cards.filter(e => matches(e, col)).forEach(e => out.push({ id:e.cardId, v:e.variant || primaryVariant(S.cards[e.cardId] || e, col), n:1 }));
   else for (const id of col.cardIds) { const c = S.cards[id]; if (!c) continue; const by = {};
@@ -1595,8 +1725,9 @@ function labelSource(src) {
   return out.filter(it => S.cards[it.id]);
 }
 function rulePrice(it) {
-  const o = L(), m = priceOf(S.cards[it.id], it.v)?.gbp;
-  if (m == null) return null;
+  const o = L(), g = priceOf(S.cards[it.id], it.v)?.gbp;
+  if (g == null) return null;
+  const m = g * (typeof langFactor === 'function' ? langFactor(it.lang) : 1);
   let x = m * (+o.pct || 100) / 100;
   const step = +o.round;
   if (step === 99) x = Math.max(0.99, Math.ceil(x) - 0.01);
@@ -1627,7 +1758,7 @@ function renderLabelRows() {
   $('#lb-rows').innerHTML = items.length ? items.map((it, i) => { const c = S.cards[it.id], rp = rulePrice(it), ov = S.labelPrices?.[lblKey(it)], m = priceOf(c, it.v)?.gbp;
     const ovv = itemOverride(it);
     return `<label class="lb-row"><input type="checkbox" data-i="${i}"${it.on ? ' checked' : ''} aria-label="Include ${esc(c.name)}">
-      <span class="t"><b>${esc(c.name)}${it.n > 1 ? ` <span class="muted">×${it.n}</span>` : ''}</b><span>${VARIANTS[it.v] && it.v !== 'normal' ? esc(VARIANTS[it.v]) + ' · ' : ''}${esc(c.set_name)} ${esc(c.number)}</span></span>
+      <span class="t"><b>${esc(c.name)}${it.n > 1 ? ` <span class="muted">×${it.n}</span>` : ''}</b><span>${VARIANTS[it.v] && it.v !== 'normal' ? esc(VARIANTS[it.v]) + ' · ' : ''}${it.lang && it.lang !== 'en' ? esc(LANGS[it.lang]) + ' · ' : ''}${esc(c.set_name)} ${esc(c.number)}</span></span>
       <span class="small muted num" title="Market price">${m != null ? GBP.format(m) : 'no price'}</span>
       <input class="inp mono" data-p="${i}" inputmode="decimal" aria-label="Sticker price for ${esc(c.name)}" placeholder="${rp != null ? rp.toFixed(2) : 'set £'}" value="${ovv > 0 ? ovv.toFixed(2) : ''}"></label>`; }).join('')
     : `<p class="small muted" style="margin:8px">${L().src === 'stock' ? 'Your stock is empty. Add cards in Vendor → Stock, or move spares in from a collection.' : L().src === 'spare' ? 'No spares yet. Set quantities above 1 in a card’s details (the ⓘ on a pocket), or choose another source above.' : L().src === 'give' ? 'The trade calculator’s "You give" list is empty.' : 'No cards match the current filters.'}</p>`;
@@ -1695,6 +1826,10 @@ function drawLabel(it, wmm, hmm, ppm) {
   if (it.v && it.v !== 'normal' && VARIANTS[it.v]) {
     g.font = `800 ${subFs * 0.85}px ${F}`; const tag = VARIANTS[it.v].toUpperCase(), tw = g.measureText(tag).width + subFs * 0.7;
     g.fillRect(x, y - subFs * 0.92, tw, subFs * 1.18); g.fillStyle = '#fff'; g.fillText(tag, x + subFs * 0.35, y - subFs * 0.06); g.fillStyle = '#000'; x += tw + subFs * 0.4;
+  }
+  if (it.lang && it.lang !== 'en' && LSHORT[it.lang]) {
+    g.font = `800 ${subFs * 0.85}px ${F}`; const tag = LSHORT[it.lang], tw = g.measureText(tag).width + subFs * 0.7;
+    g.lineWidth = Math.max(1, subFs * 0.12); g.strokeRect(x, y - subFs * 0.92, tw, subFs * 1.18); g.fillText(tag, x + subFs * 0.35, y - subFs * 0.06); x += tw + subFs * 0.4;
   }
   const code = (S.setsCache?.data || []).find(st => st.id === c.set_id)?.ptcgoCode;
   const setTxt = `${code || c.set_name} · ${c.number}${c.rarity && !code ? '' : ''}`;
@@ -1836,7 +1971,7 @@ document.addEventListener('click', e => {
     case 'refresh-prices': refreshPrices(); break;
     case 'sort-value': e.stopPropagation(); UI.listSort = UI.listSort === 'value' ? 'binder' : 'value'; renderView(); break;
     case 'refresh-one': (async () => { const eid = UI.infoId, id = cardIdOf(eid);
-      try { const [c] = await apiFetchAll(`id:"${id}"`); if (c) { mergeCard(c); save(); } await loadFx(); openInfo(eid); renderProgress(); toast(c?.price ? 'Price updated' : 'Still no price for this card', c?.price ? 'success' : 'warn'); }
+      try { const [c] = await apiFetchAll(`id:"${id}"`); if (c) { mergeCard(c); save(); } if (S.cards[id]?.price?.td) S.cards[id].price.td.fetched = ''; await tcgdexPrices([id]); await loadFx(); openInfo(eid); renderProgress(); toast(S.cards[id]?.price ? 'Price updated' : 'Still no price for this card', S.cards[id]?.price ? 'success' : 'warn'); }
       catch (err) { toast('Refresh failed: ' + err.message, 'error'); } })(); break;
     case 'share-want': shareRows(rowsFor(active(), 'needed')); break;
     case 'labels': openLabels(); break;

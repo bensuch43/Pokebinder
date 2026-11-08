@@ -90,3 +90,9 @@ All code fixes are done in v2.4. The remaining actions are yours:
 - **Restoring a backup:** stock and ledger entries go through the same field-by-field checks as everything else. IDs must match the expected pattern, quantities and prices are capped, payment methods and printings must come from a fixed list, and anything pointing at an unknown card is dropped. I tested it with a backup containing `__proto__`, impossible quantities, negative costs and `<script>` as a payment method; all of it was removed or neutralised.
 - **The ledger keeps a full record:** entries are voided, never deleted, so a wrong tap can't silently erase a sale from your records.
 - **Payment details:** none are stored. The app only records which method was used (Cash, Card or Other).
+
+## v2.8 addendum: hourly prices
+
+- **New outbound calls:** per-card price lookups to `api.tcgdex.net`, which was already allowed in the Content Security Policy. No new hosts, no keys, nothing personal is sent (only set and card IDs).
+- **Stored data:** TCGdex price figures and the matched TCGdex card ID. Both go through the restore sanitiser: numbers must be positive and under 1,000,000, dates must be `YYYY-MM-DD`, and IDs must match `^[A-Za-z0-9.-]{1,40}$`.
+- **Rendering:** all figures are formatted numbers; source names and dates are escaped.

@@ -1,4 +1,4 @@
-# PokéBinder Studio v2.6
+# PokéBinder Studio v2.8
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -47,6 +47,8 @@ The **Vendor** tab is separate from your binders. Collections are your personal 
 - **Ledger:** every sale, purchase and trade with time, payment method, profit per sale, and takings by method. It also shows how much cash you took in versus paid out, for Today, the last 7 days, this month or all time. Mistakes are **voided** rather than deleted: the entry stays crossed out, it's left out of the totals, and its stock changes are reversed. Both stock and ledger export as CSV.
 - **Online first, offline fallback:** when you add a card to a sale, offer or trade, the app re-checks its price if it's more than an hour old and labels it "live". With no signal it uses the last price it saved and labels it with that date. Searches fall back to cards already saved on the device.
 - **Share:** shares your stock as a "Cards for sale" link with asking prices.
+- **Languages (Vendor only):** every stock card, offer line, trade line, sale and ledger entry carries a print language (English, Japanese, German, French, Italian, Spanish, Portuguese, Dutch, Polish, Korean, Chinese). Under **Stock → Languages & pricing** you set what each language is worth as a % of market, because the free prices come from English-language listings. Those % values feed into stock value, asking prices, buy offers and trades. You can also set the default language for new cards. Stickers show a boxed language code (e.g. **JP**) for anything that isn't English. Language is also included in the CSVs and share links. Collections ignore language on purpose, because the artwork is the same in any language.
+- **Japanese limitation:** cards are looked up in the English card database. A Japanese copy is logged against its English equivalent, so its sticker shows the English set and number. Japan-only cards can't be found yet.
 
 ## Design decisions (deliberate trade-offs)
 
@@ -79,12 +81,15 @@ The Pokémon TCG API has **no artist** recorded for about 1,600 cards, including
 ## Prices (GBP)
 
 - **Source:** the Pokémon TCG API returns Cardmarket prices (EUR, the European market and the closest to the UK) and TCGplayer prices (USD, the US market). Neither is in GBP. Cardmarket is the default, and you can switch in Settings.
-- **Metric:** for Cardmarket the app uses the trend price, falling back to the 30-day average, then average sell price, then low. For TCGplayer it uses the market price (falling back to mid), taking the normal print first, then holo.
+- **Which Cardmarket figure (v2.8):** Settings → Price figure. The default is the **lowest Excellent-or-better listing** (Cardmarket's "EX+ low"), which is the closest free figure to "cheapest decent copy on sale". You can choose the 30-day average, trend, or lowest listing in any condition instead. TCGplayer uses the market price (falling back to mid), normal print first, then holo.
+- **Two Cardmarket sources:** the Pokémon TCG API (has the EX+ figure but can lag by months) and **TCGdex**, which republishes Cardmarket's official price guide every hour (no EX+ figure). Turn TCGdex prices off in Settings if you want.
+- **Status dots:** 🟢 **good** = your chosen figure, under 14 days old · 🟠 **fallback** = chosen figure missing or old, so a fresh 30-day average (then trend) is shown · 🔴 **stale** = only old prices exist. The ⓘ panel lists every figure, its date and which source it came from, with the one in use highlighted. Reverse holos have no EX+ figure, so they use the reverse-holo trend, 30-day average or low.
+- **Trend arrows:** ▲/▼ with a percentage when the 7-day average is more than 5% above or below the 30-day average (from the freshest source).
 - **Conversion:** GBP is calculated using the ECB reference rate from Frankfurter (`CONFIG.fxUrl`, no key needed). The rate is cached for 12 hours, and you can override it in Settings. If no rate is available, prices show in EUR or USD rather than a guessed rate.
-- **Dates:** every price keeps the source's own **price date** (the date that source last updated it) and the date the app **fetched** it. Prices older than 14 days are shown in amber.
+- **Dates:** every price keeps the source's own **price date** (the date that source last updated it) and the date the app **fetched** it. Prices older than 14 days get a red dot.
 - **Where prices appear:** a Value column in Checklist (tap the heading to sort high to low), a price panel in ⓘ, the value owned and to-complete under the progress bar, to-complete per set, the text want list and printed checklist, and nine CSV columns (`price_gbp`, `price_native`, `price_currency`, `price_source`, `price_metric`, `price_date`, `fx_gbp_per_unit`, `fx_source`, `price_fetched`).
-- **Refresh:** tap ↻ Refresh prices to re-pull prices for the current collection, 60 cards per API call. One card can be refreshed from its ⓘ panel.
-- **Caveat:** these are free, scheduled syncs and can lag the market. Treat them as a guide, not a valuation.
+- **Refresh:** tap ↻ Refresh prices to re-pull prices for the current collection, 60 cards per API call, then hourly prices from TCGdex (6 at a time; cards checked in the last hour are skipped). One card can be refreshed from its ⓘ panel. The vendor screens do the same automatically before pricing.
+- **Caveat:** these are free, scheduled syncs, not live listings. Live "cheapest Lightly Played copy right now" isn't available for free: Cardmarket's API isn't open to new applications and scraping breaks their terms. Treat prices as a guide, not a valuation.
 
 ## API key
 
