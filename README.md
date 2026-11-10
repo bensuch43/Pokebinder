@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.0
+# PokéBinder Studio v3.1
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -89,6 +89,24 @@ The Pokémon TCG API has **no artist** recorded for about 1,600 cards, including
   - English: matched on set name + card number, with the name checked.
   - Japanese/Korean/Chinese: matched on Pokédex number + card number, and only when exactly one card fits.
   - Anything unmatched stays custom, with the reason listed under the banner. Run it again later as TCGdex adds cards.
+
+## Deals (v3.1)
+
+The **Deals** panel at the top of **Overview** scans the current collection for good moments to buy. Its settings are saved with each collection:
+
+- **Scan:** needed cards (default) or all cards.
+- **Flag drops of:** 5–30% (default 10%).
+- **Ignore under:** skip cheap cards (default £1), where averages swing on one sale.
+- **Compare Japanese prints:** also look for a Japanese card of the same Pokémon by the same artist, and flag it when it's cheaper by at least the threshold.
+
+What gets flagged, biggest saving first:
+
+- **▼ 7-day average below the 30-day average:** prices are dipping.
+- **▼ Trend under the 30-day average:** a slower, steadier dip.
+- **Japanese print … less:** the same-artist Japanese card costs less. It is usually the same artwork but not always, so check before buying.
+- **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
+
+**Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
 
 ## Prices (GBP)
 

@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.0.0',
+  version: '3.1.0',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -617,13 +617,113 @@ function listHtml(col) {
 
 function overviewHtml(col) {
   const t = ownedTotals(col);
-  return `<div class="ov">
+  return `<div class="ov">${dealsHtml(col)}
     <section class="panel"><div class="row" style="justify-content:space-between"><div><h2>Collection value</h2>
       <p class="muted small" style="margin:0">Recorded once a day from the latest prices you've fetched${col.history?.length ? ` · since ${esc(col.history[0].d)}` : ''}.</p></div>
       <div class="legend"><span>Owned value</span>${t.withPaid ? '<span class="paid">Paid</span>' : ''}</div></div>
       ${chartSvg(col.history || [])}</section>
     <div class="row" style="justify-content:flex-end"><button class="btn sm" data-act="share-want"${UI.layout.cards.some(e => !col.owned[e.id]) ? '' : ' disabled'}>${ic('share', 'sm')}Share want list (${UI.layout.cards.filter(e => !col.owned[e.id]).length})</button></div>
     ${setsHtml(col)}</div>`;
+}
+/* ==========================================================================
+   DEALS — cards in this collection trading below their recent average, plus cheaper Japanese prints
+   Uses Cardmarket's price guide via TCGdex. These are market-wide averages, not individual listings:
+   they show good moments to buy, not specific underpriced copies.
+   ========================================================================== */
+const DEAL_DEFAULTS = { scope:'needed', dip:10, min:1, jp:true };
+const dealCfg = col => ({ ...DEAL_DEFAULTS, ...(col.deals || {}) });
+/* Cardmarket figures for one printing, from TCGdex (reverse holos use the "-holo" columns). */
+function tdFigs(c, v) {
+  const td = c?.price?.td; if (!td || !isFresh(td.updated)) return null;
+  const rev = v === 'reverse';
+  const f = { avg7:rev ? td.avg7H : td.avg7, avg30:rev ? td.avg30H : td.avg30, trend:rev ? td.trendH : td.trend, low:rev ? td.lowH : td.low, date:td.updated };
+  return f.avg30 > 0 ? f : null;
+}
+const eurGbp = v => { const r = fxRate('EUR'); return v > 0 && r ? v * r : null; };
+/* Japanese prints of the same Pokémon by the same artist (often the same artwork). Cached for a week. */
+async function jpAlternatives(c, signal) {
+  if (!c.dex || !c.artist || c.lang) return [];
+  S.jpAlt ||= {}; const hit = S.jpAlt[c.id];
+  if (hit && Date.now() - hit.ts < 7 * 864e5) return hit.ids.map(id => S.cards[id]).filter(Boolean);
+  const list = await tdJson('ja', `/cards?dexId=${c.dex}&illustrator=${encodeURIComponent(c.artist)}`, signal) || [];
+  const cards = await tdFull(list.filter(b => b?.id && !isPocketSet(tdBriefSet(b))).slice(0, 12), 'ja', null, signal);
+  cards.forEach(mergeCard);
+  S.jpAlt[c.id] = { ts:Date.now(), ids:cards.map(x => x.id) }; save();
+  return cards.map(x => S.cards[x.id]);
+}
+function dealEntries(col, cfg) {
+  const seen = new Set();
+  return UI.layout.cards.filter(e => (cfg.scope === 'all' || !col.owned[e.id]) && !S.cards[e.cardId]?.custom)
+    .filter(e => { const k = `${e.cardId}|${e.variant || ''}`; if (seen.has(k)) return false; seen.add(k); return true; });
+}
+async function scanDeals() {
+  const col = active(); if (!col) return;
+  const cfg = dealCfg(col), entries = dealEntries(col, cfg);
+  if (!entries.length) { toast(cfg.scope === 'needed' ? 'Nothing needed in this collection — switch the scan to all cards' : 'No cards to scan', 'warn'); return; }
+  UI.dealsBusy = true; renderView();
+  const ac = new AbortController(); UI.dealsAbort = ac;
+  const prog = t => { const el = $('#deal-prog'); if (el) el.textContent = t; };
+  try {
+    await loadFx();
+    const ids = [...new Set(entries.map(e => e.cardId))];
+    await tcgdexPrices(ids, (n, t) => prog(`Checking Cardmarket prices… ${n} / ${t}`), ac.signal);
+    const jp = new Map();
+    if (cfg.jp) {
+      const en = ids.map(id => S.cards[id]).filter(c => c && !c.lang && c.dex && c.artist);
+      let n = 0;
+      for (let i = 0; i < en.length && !ac.signal.aborted; i += 6) {
+        await Promise.all(en.slice(i, i + 6).map(async c => { try { jp.set(c.id, await jpAlternatives(c, ac.signal)); } catch (e) { if (e.name === 'AbortError') throw e; } prog(`Looking for Japanese prints… ${++n} / ${en.length}`); }));
+      }
+      const alt = [...new Set([...jp.values()].flat().map(c => c.id))];
+      if (alt.length) await tcgdexPrices(alt, (n, t) => prog(`Pricing Japanese prints… ${n} / ${t}`), ac.signal);
+    }
+    const rows = [];
+    for (const e of entries) {
+      const c = S.cards[e.cardId], v = e.variant || (c.variants?.length === 1 ? c.variants[0] : null), f = tdFigs(c, v);
+      const pi = priceOf(c, e.variant || undefined), now = pi?.gbp;
+      const flags = []; let score = 0;
+      if (f && (now == null || now >= cfg.min)) {
+        if (f.avg7 > 0) { const d = (f.avg7 - f.avg30) / f.avg30 * 100; if (d <= -cfg.dip) { flags.push({ k:'dip', t:`7-day average ${Math.round(-d)}% below 30-day`, s:-d }); score = Math.max(score, -d); } }
+        if (f.trend > 0) { const d = (f.trend - f.avg30) / f.avg30 * 100; if (d <= -cfg.dip) { flags.push({ k:'trend', t:`Trend ${Math.round(-d)}% under 30-day average`, s:-d }); score = Math.max(score, -d * 0.8); } }
+        if (f.low > 0 && f.trend > 0 && f.low <= f.trend * 0.5) flags.push({ k:'low', t:`A copy is listed at ${GBP.format(eurGbp(f.low) ?? 0)} — any condition, so check it`, s:0 });
+      }
+      let jpBest = null;
+      if (cfg.jp && now > 0) {
+        for (const j of jp.get(c.id) || []) { const jpPi = priceOf(j); if (jpPi?.gbp > 0 && jpPi.status !== 'stale' && (!jpBest || jpPi.gbp < jpBest.pi.gbp)) jpBest = { c:j, pi:jpPi }; }
+        if (jpBest) { const save = (now - jpBest.pi.gbp) / now * 100;
+          if (save >= cfg.dip && now - jpBest.pi.gbp >= 0.5) { flags.push({ k:'jp', t:`Japanese print by the same artist: ${GBP.format(jpBest.pi.gbp)} (${Math.round(save)}% less)`, s:save }); score = Math.max(score, save * 0.9); }
+          else jpBest = null; }
+      }
+      if (flags.some(x => x.k !== 'low') || flags.length && score === 0 && flags[0].k === 'low') rows.push({ e, c, pi, flags, score, jp:jpBest });
+    }
+    rows.sort((x, y) => y.score - x.score || (y.pi?.gbp || 0) - (x.pi?.gbp || 0));
+    UI.deals = { colId:col.id, at:Date.now(), scanned:entries.length, rows, cfg:{ ...cfg } };
+  } catch (e) { if (e.name !== 'AbortError') toast(`Deal scan stopped: ${e.message}`, 'error'); }
+  finally { UI.dealsBusy = false; UI.dealsAbort = null; save(); render(); }   // render() rebuilds the layout so the tiles see new prices
+}
+function dealsHtml(col) {
+  const cfg = dealCfg(col), d = UI.deals?.colId === col.id ? UI.deals : null, n = dealEntries(col, cfg).length;
+  const sel = (k, opts) => `<select class="inp sm" data-deal="${k}" aria-label="${k}">${opts.map(([v, t]) => `<option value="${v}"${String(cfg[k]) === String(v) ? ' selected' : ''}>${t}</option>`).join('')}</select>`;
+  const row = x => { const c = x.c, v = x.e.variant;
+    return `<li class="deal"><button class="deal-main" data-act="info" data-id="${esc(x.e.id)}" aria-label="Details for ${esc(dispName(x.e))}">
+      ${safeUrl(c.img_s) ? `<img src="${esc(safeUrl(c.img_s))}" alt="" loading="lazy">` : '<span class="ph"></span>'}
+      <span class="t"><b>${esc(c.name)}${v && v !== 'normal' ? ` <span class="vtag">${esc(VARIANTS[v])}</span>` : ''}</b><span class="small muted">${esc(c.set_name)} · ${esc(c.number)}${col.owned[x.e.id] ? ' · owned' : ''}</span>
+        <span class="flags">${x.flags.map(f => `<span class="flag ${f.k}">${f.k === 'jp' ? '' : f.k === 'low' ? '⚠ ' : '▼ '}${esc(f.t)}</span>`).join('')}</span></span>
+      <span class="price">${priceHtml(x.pi)}</span></button>
+      <span class="deal-links small"><a href="${esc(cardmarketUrl(c))}" target="_blank" rel="noopener noreferrer">Find on Cardmarket</a>${x.jp ? ` · <a href="${esc(cardmarketUrl({ name:`${c.name} Japanese` }))}" target="_blank" rel="noopener noreferrer">Japanese print</a> <span class="muted">(${esc(x.jp.c.set_name)} ${esc(x.jp.c.number)})</span>` : ''}</span></li>`; };
+  return `<section class="panel deals" aria-labelledby="deals-h">
+    <div class="row" style="justify-content:space-between;align-items:flex-start"><div><h2 id="deals-h">Deals</h2>
+      <p class="muted small" style="margin:0">Cards trading below their recent Cardmarket average${cfg.jp ? ', and cheaper Japanese prints by the same artist' : ''}. These are market averages, not individual listings — use them to time a purchase, then check the copies on Cardmarket.</p></div></div>
+    <div class="row deal-cfg">
+      <label class="small">Scan ${sel('scope', [['needed', 'needed cards'], ['all', 'all cards']])}</label>
+      <label class="small">Flag drops of ${sel('dip', [[5, '5%+'], [10, '10%+'], [15, '15%+'], [20, '20%+'], [30, '30%+']])}</label>
+      <label class="small">Ignore under ${sel('min', [[0, '£0'], [0.5, '£0.50'], [1, '£1'], [2, '£2'], [5, '£5'], [10, '£10']])}</label>
+      <label class="chk small" style="margin:0"><input type="checkbox" data-deal="jp"${cfg.jp ? ' checked' : ''}><span>Compare Japanese prints</span></label>
+      ${UI.dealsBusy ? `<button class="btn sm" data-act="deals-stop">Stop</button>` : `<button class="btn sm primary" data-act="deals-scan">${ic('search', 'sm')}Scan ${n} card${n === 1 ? '' : 's'}</button>`}</div>
+    ${UI.dealsBusy ? `<p class="small muted" id="deal-prog" role="status">Starting…</p>` : ''}
+    ${d && !UI.dealsBusy ? (d.rows.length ? `<p class="small muted" style="margin:0">${d.rows.length} of ${d.scanned} card${d.scanned === 1 ? '' : 's'} flagged · scanned ${new Date(d.at).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })}. Biggest drop first.</p><ul class="deal-list">${d.rows.slice(0, 100).map(row).join('')}</ul>`
+      : `<p class="small muted" style="margin:0">Nothing below its 30-day average by ${d.cfg.dip}% or more right now (${d.scanned} scanned). Try a smaller threshold, or scan again another day.</p>`) : ''}
+  </section>`;
 }
 function chartSvg(h) {
   if (h.length < 2) return `<div class="empty-msg" style="padding:28px 8px">${ic('chart')}<span class="small">The chart fills in as you use the app — refresh prices on another day to see a trend.${h.length ? ` Today: <b class="price">${GBP.format(h[0].v)}</b>` : ''}</span></div>`;
@@ -1394,6 +1494,13 @@ $('#s-add').addEventListener('click', () => {
 });
 $('#dlg-add').addEventListener('close', () => UI.search.abort?.abort());
 
+document.addEventListener('change', e => {
+  const k = e.target.closest?.('[data-deal]')?.dataset.deal; if (!k) return;
+  const col = active(); if (!col) return;
+  const v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+  col.deals = { ...dealCfg(col), [k]:k === 'dip' || k === 'min' ? +v : v }; save(); renderView();
+});
+
 /* ---------- custom cards → real TCGdex cards ---------- */
 const LANG_PREFIX = { japanese:'ja', korean:'ko', chinese:'zh-tw' };
 function customLang(c) { const w = `${c.series} ${c.set_name}`.toLowerCase().match(/\b(japanese|korean|chinese)\b/); return w ? LANG_PREFIX[w[1]] : 'en'; }
@@ -1574,7 +1681,7 @@ $('#e-copy').addEventListener('click', async () => {
   catch { toast('Clipboard not available — use Download instead', 'error'); }
 });
 $('#e-backup').addEventListener('click', () => {
-  const { setsCache, gapCache, tcgdexCache, tdIndex, tdSetCache, tdSetsList, ...keep } = S;   // caches rebuild themselves; keep backups small
+  const { setsCache, gapCache, tcgdexCache, tdIndex, tdSetCache, tdSetsList, jpAlt, ...keep } = S;   // caches rebuild themselves; keep backups small
   const state = { ...keep, settings:{ ...S.settings, apiKey:'' } };   // never put the API key in a file that might be shared
   download(`PokeBinder_backup_${today()}.json`, JSON.stringify({ app:'PokeBinderStudio', exported:new Date().toISOString(), state }), 'application/json');
   S.settings.lastBackup = Date.now(); save(); toast('Backup downloaded', 'success');
@@ -1627,6 +1734,8 @@ function sanitizeState(st) {
         (col.copies[cid] ||= {})[v] = e;
       }
     }
+    if (c.deals && typeof c.deals === 'object') col.deals = { scope:c.deals.scope === 'all' ? 'all' : 'needed', dip:[5, 10, 15, 20, 30].includes(c.deals.dip) ? c.deals.dip : 10,
+      min:[0, 0.5, 1, 2, 5, 10].includes(c.deals.min) ? c.deals.min : 1, jp:c.deals.jp !== false };
     col.history = (Array.isArray(c.history) ? c.history : []).filter(h => h && /^\d{4}-\d{2}-\d{2}$/.test(h.d)).slice(-730).map(h => ({ d:h.d, v:numOr(h.v, 0), n:numOr(h.n, 0), p:numOr(h.p, 0) }));
     collections[id] = col;
   }
@@ -2164,6 +2273,8 @@ document.addEventListener('click', e => {
     case 'goto-set': UI.filters.set = t.dataset.set; UI.view = 'list'; render(); break;
     case 'refresh-prices': refreshPrices(); break;
     case 'match-custom': matchCustom(); break;
+    case 'deals-scan': scanDeals(); break;
+    case 'deals-stop': UI.dealsAbort?.abort(); break;
     case 'sort-value': e.stopPropagation(); UI.listSort = UI.listSort === 'value' ? 'binder' : 'value'; renderView(); break;
     case 'refresh-one': (async () => { const eid = UI.infoId, id = cardIdOf(eid);
       try { if (S.cards[id]?.price?.td) S.cards[id].price.td.fetched = ''; await tcgdexPrices([id]); if (!S.cards[id]?.price?.td && S.cards[id]?.src !== 'tcgdex') { const [c] = await apiFetchAll(`id:"${id}"`).catch(() => []); if (c) mergeCard(c); } save(); await loadFx(); openInfo(eid); renderProgress(); toast(S.cards[id]?.price ? 'Price updated' : 'Still no price for this card', S.cards[id]?.price ? 'success' : 'warn'); }

@@ -188,6 +188,21 @@ label.f{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin:
 .pdot.good{background:var(--ok)} .pdot.fallback{background:var(--warn)} .pdot.stale{background:var(--danger);box-shadow:0 0 0 2px color-mix(in srgb,var(--danger) 30%,transparent)}
 .ptrend{font-size:11px;font-weight:700;margin-left:5px;font-variant-numeric:tabular-nums} .ptrend.up{color:var(--ok)} .ptrend.down{color:var(--danger)}
 .big .ptrend{font-size:13px}
+.deals{display:grid;gap:10px} .deal-cfg{gap:8px 14px;align-items:center} .deal-cfg label{display:inline-flex;align-items:center;gap:6px}
+.inp.sm{padding:6px 28px 6px 10px;min-height:36px;font-size:13px;width:auto}
+.deal-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.deal{border:1px solid var(--line);border-radius:var(--r);background:var(--surface);overflow:hidden}
+.deal-main{all:unset;box-sizing:border-box;cursor:pointer;display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px;width:100%}
+.deal-main:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.deal-main img,.deal-main .ph{width:44px;height:61px;border-radius:5px;object-fit:cover;background:var(--surface-2);display:block}
+.deal-main .t{display:grid;gap:3px;min-width:0} .deal-main .t b{overflow-wrap:anywhere}
+.flags{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+.flag{font-size:11.5px;padding:2px 7px;border-radius:999px;background:var(--surface-2);color:var(--text-2);line-height:1.4}
+.flag.dip,.flag.trend{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--text)}
+.flag.jp{background:color-mix(in srgb,var(--info) 16%,transparent);color:var(--text)}
+.flag.low{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--text)}
+.deal-links{display:block;padding:0 10px 10px 64px}
+@media (max-width:560px){ .deal-links{padding-left:10px} .deal-main{grid-template-columns:40px minmax(0,1fr)} .deal-main .price{grid-column:2} }
 .match-banner{margin-bottom:12px;border-left:3px solid var(--accent)} .match-banner summary{cursor:pointer}
 .plegend{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:5px} .plegend li{display:flex;align-items:baseline;gap:0} .plegend b{color:var(--text);margin-right:4px}
 .qual{padding:8px 10px;border-radius:8px;background:var(--surface)} .qual.good{border-left:3px solid var(--ok)} .qual.fallback{border-left:3px solid var(--warn)} .qual.stale{border-left:3px solid var(--danger)}
