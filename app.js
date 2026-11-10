@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.1.1',
+  version: '3.1.2',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -650,11 +650,12 @@ const eurGbp = v => { const r = fxRate('EUR'); return v > 0 && r ? v * r : null;
 async function jpAlternatives(c, signal) {
   if (!c.dex || !c.artist || c.lang) return [];
   S.jpAlt ||= {}; const hit = S.jpAlt[c.id];
-  if (hit && Date.now() - hit.ts < 7 * 864e5) return hit.ids.map(id => S.cards[id]).filter(Boolean);
-  const list = await tdJson('ja', `/cards?dexId=${c.dex}&illustrator=${encodeURIComponent(c.artist)}`, signal) || [];
-  const cards = await tdFull(list.filter(b => b?.id && !isPocketSet(tdBriefSet(b))).slice(0, 12), 'ja', null, signal);
+  if (hit && hit.v === 2 && Date.now() - hit.ts < 7 * 864e5) return hit.ids.map(id => S.cards[id]).filter(Boolean);
+  const list = await tdJson('ja', `/cards?dexId=eq:${c.dex}&illustrator=${encodeURIComponent(c.artist)}`, signal) || [];
+  const cards = (await tdFull(list.filter(b => b?.id && !isPocketSet(tdBriefSet(b))).slice(0, 12), 'ja', null, signal))
+    .filter(x => x.dex === c.dex && normName(x.artist) === normName(c.artist));   // belt and braces: same Pokémon, same artist
   cards.forEach(mergeCard);
-  S.jpAlt[c.id] = { ts:Date.now(), ids:cards.map(x => x.id) }; save();
+  S.jpAlt[c.id] = { v:2, ts:Date.now(), ids:cards.map(x => x.id) }; save();   // v2: results cached by v3.1.0/3.1.1 were wrong, so they're ignored
   return cards.map(x => S.cards[x.id]);
 }
 function dealEntries(col, cfg) {
@@ -1076,12 +1077,14 @@ async function tdSearch(mode, term, lang, onProgress, signal, keep = () => true)
     if (lang !== 'en' && /^[\x20-\x7e]+$/.test(term)) {   // Latin text in a non-English search: go via the Pokédex number
       const dex = await dexFor(term, signal);
       if (dex == null) return { cards:[], total:0, note:`Couldn't find "${term}" as a Pokémon. For Trainer cards, type the ${TD_LANGS[lang]} name.` };
-      briefs = await tdJson(lang, `/cards?dexId=${dex}`, signal) || []; note = `Pokédex #${dex}`;
+      briefs = await tdJson(lang, `/cards?dexId=eq:${dex}`, signal) || []; note = `Pokédex #${dex}`;
     } else briefs = await tdJson(lang, `/cards?name=${encodeURIComponent(term)}`, signal) || [];
   }
   briefs = briefs.filter(b => b?.id && !isPocketSet(tdBriefSet(b)) && keep(b));
   const total = briefs.length, truncated = total > TD_CAP;
-  const cards = await tdFull(briefs.slice(0, TD_CAP), lang, onProgress, signal);
+  let cards = await tdFull(briefs.slice(0, TD_CAP), lang, onProgress, signal);
+  const dexWanted = note.startsWith('Pokédex #') ? +note.slice(9) : null;
+  if (dexWanted) cards = cards.filter(c => c.dex === dexWanted);
   return { cards:cards.sort(SORTS.release), total, truncated, note };
 }
 async function tcgdexIdFor(c) {
@@ -1531,8 +1534,10 @@ async function findTdForCustom(c, signal) {
   const dex = await dexFor(baseName(c.name).replace(/^(alolan|galarian|hisuian|paldean)\s+/i, ''), signal);
   if (dex == null) return { why:"couldn't identify the Pokémon on TCGdex (Trainer cards need adding by hand)" };
   for (const L of langs) {
-    const list = (await tdJson(L, `/cards?dexId=${dex}`, signal) || []).filter(b => normNo(b.localId) === num);
-    if (list.length === 1) { const j = await tdJson(L, `/cards/${encodeURIComponent(list[0].id)}`, signal); if (j) return { card:await tdToCard(j, L, signal) }; }
+    const list = (await tdJson(L, `/cards?dexId=eq:${dex}`, signal) || []).filter(b => normNo(b.localId) === num);
+    if (list.length === 1) { const j = await tdJson(L, `/cards/${encodeURIComponent(list[0].id)}`, signal);
+      if (j && !(j.dexId || []).includes(dex)) return { why:`TCGdex returned a different Pokémon (#${(j.dexId || [])[0]})` };
+      if (j) return { card:await tdToCard(j, L, signal) }; }
     if (list.length > 1) return { why:`${list.length} ${TD_LANGS[L]} cards share that name and number (${list.map(b => tdBriefSet(b)).join(', ')})` };
   }
   return { why:`TCGdex has no ${TD_LANGS[lang]} match` + (lang === 'zh-tw' ? ' (it has very little Chinese card data)' : '') };
