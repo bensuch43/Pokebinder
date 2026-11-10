@@ -202,7 +202,10 @@ label.f{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin:
 .flag.jp{background:color-mix(in srgb,var(--info) 16%,transparent);color:var(--text)}
 .flag.low{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--text)}
 .deal-links{display:block;padding:0 10px 10px 64px}
-@media (max-width:560px){ .deal-links{padding-left:10px} .deal-main{grid-template-columns:40px minmax(0,1fr)} .deal-main .price{grid-column:2} }
+.deal-jp{display:grid;grid-template-columns:44px minmax(0,1fr);gap:10px;align-items:start;margin:0 10px 10px 64px;padding:8px;border-radius:8px;background:color-mix(in srgb,var(--info) 8%,transparent)}
+.deal-jp img,.deal-jp .ph{width:44px;height:61px;border-radius:5px;object-fit:cover;background:var(--surface-2);display:block}
+.linkbtn{all:unset;cursor:pointer;color:var(--accent-text);text-decoration:underline;font:inherit} .linkbtn:focus-visible{outline:2px solid var(--accent)}
+@media (max-width:560px){ .deal-links{padding-left:10px} .deal-jp{margin-left:10px} .deal-main{grid-template-columns:40px minmax(0,1fr)} .deal-main .price{grid-column:2} }
 .match-banner{margin-bottom:12px;border-left:3px solid var(--accent)} .match-banner summary{cursor:pointer}
 .plegend{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:5px} .plegend li{display:flex;align-items:baseline;gap:0} .plegend b{color:var(--text);margin-right:4px}
 .qual{padding:8px 10px;border-radius:8px;background:var(--surface)} .qual.good{border-left:3px solid var(--ok)} .qual.fallback{border-left:3px solid var(--warn)} .qual.stale{border-left:3px solid var(--danger)}

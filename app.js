@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.1.2',
+  version: '3.1.3',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -646,16 +646,33 @@ function tdFigs(c, v) {
   return f.avg30 > 0 ? f : null;
 }
 const eurGbp = v => { const r = fxRate('EUR'); return v > 0 && r ? v * r : null; };
-/* Japanese prints of the same Pokémon by the same artist (often the same artwork). Cached for a week. */
+/* Rarity tier, so a Full Art is only compared with a Full Art, a Rainbow/gold with a Hyper Rare, a promo with a promo.
+   Works on both the Pokémon TCG API's rarity names and TCGdex's (TCGdex keeps English rarity names for Japanese cards). */
+function rarityTier(rarity, setId) {
+  const r = String(rarity || '').toLowerCase();
+  if (/promo/.test(r) || /-p$/i.test(setId || '') || /^(svp|swshp|smp|xyp|bwp|hsp|dpp|np|basep|mep)$/i.test(setId || '')) return 'promo';
+  if (/special illustration/.test(r)) return 'sir';
+  if (/illustration/.test(r)) return 'ir';
+  if (/rainbow|hyper|secret|gold/.test(r)) return 'gold';
+  if (/shiny/.test(r)) return 'shiny';
+  if (/ultra|full art/.test(r)) return 'fullart';
+  if (/gallery|character/.test(r)) return 'gallery';
+  if (/amazing|radiant|prism|legend|break|shining|ace|classic|mega_attack|futuristic|black white|pikachu rare/.test(r)) return 'other:' + r.replace(/\s+/g, ' ').trim();
+  if (!r || r === 'none') return 'unknown';
+  return 'regular';   // common, uncommon, rare, holo, double/triple rare, GX/V/VMAX/ex/LV.X and so on
+}
+const tierLabel = { promo:'promo', sir:'Special Illustration Rare', ir:'Illustration Rare', gold:'Rainbow/gold', shiny:'shiny', fullart:'Full Art', gallery:'gallery', regular:'regular', unknown:'rarity not recorded' };
+const sameTier = (en, jp) => { const a = rarityTier(en.rarity, en.set_id), b = rarityTier(jp.rarity, jp.set_id); return a === b || (a === 'regular' && b === 'unknown'); };
+/* Japanese prints of the same Pokémon, by the same artist, at the same rarity tier (usually the same artwork). Cached for a week. */
 async function jpAlternatives(c, signal) {
   if (!c.dex || !c.artist || c.lang) return [];
   S.jpAlt ||= {}; const hit = S.jpAlt[c.id];
-  if (hit && hit.v === 2 && Date.now() - hit.ts < 7 * 864e5) return hit.ids.map(id => S.cards[id]).filter(Boolean);
+  if (hit && hit.v === 3 && Date.now() - hit.ts < 7 * 864e5) return hit.ids.map(id => S.cards[id]).filter(Boolean);
   const list = await tdJson('ja', `/cards?dexId=eq:${c.dex}&illustrator=${encodeURIComponent(c.artist)}`, signal) || [];
   const cards = (await tdFull(list.filter(b => b?.id && !isPocketSet(tdBriefSet(b))).slice(0, 12), 'ja', null, signal))
-    .filter(x => x.dex === c.dex && normName(x.artist) === normName(c.artist));   // belt and braces: same Pokémon, same artist
+    .filter(x => x.dex === c.dex && normName(x.artist) === normName(c.artist) && sameTier(c, x));   // same Pokémon, same artist, same rarity tier
   cards.forEach(mergeCard);
-  S.jpAlt[c.id] = { v:2, ts:Date.now(), ids:cards.map(x => x.id) }; save();   // v2: results cached by v3.1.0/3.1.1 were wrong, so they're ignored
+  S.jpAlt[c.id] = { v:3, ts:Date.now(), ids:cards.map(x => x.id) }; save();   // v3: earlier versions matched too loosely, so their results are ignored
   return cards.map(x => S.cards[x.id]);
 }
 function dealEntries(col, cfg) {
@@ -699,7 +716,7 @@ async function scanDeals() {
       }
       let jpBest = null;
       if (cfg.jp && now > 0) {
-        for (const j of jp.get(c.id) || []) { const jpPi = priceOf(j); if (jpPi?.gbp > 0 && jpPi.status !== 'stale' && (!jpBest || jpPi.gbp < jpBest.pi.gbp)) jpBest = { c:j, pi:jpPi }; }
+        for (const j of (jp.get(c.id) || []).filter(j => !(S.jpReject?.[c.id] || []).includes(j.id))) { const jpPi = priceOf(j); if (jpPi?.gbp > 0 && jpPi.status !== 'stale' && (!jpBest || jpPi.gbp < jpBest.pi.gbp)) jpBest = { c:j, pi:jpPi }; }
         if (jpBest) { const save = (now - jpBest.pi.gbp) / now * 100;
           if (save >= cfg.dip && now - jpBest.pi.gbp >= 0.5) { flags.push({ k:'jp', t:`Japanese print by the same artist: ${GBP.format(jpBest.pi.gbp)} (${Math.round(save)}% less)`, s:save }); score = Math.max(score, save * 0.9); }
           else jpBest = null; }
@@ -720,7 +737,12 @@ function dealsHtml(col) {
       <span class="t"><b>${esc(c.name)}${v && v !== 'normal' ? ` <span class="vtag">${esc(VARIANTS[v])}</span>` : ''}</b><span class="small muted">${esc(c.set_name)} · ${esc(c.number)}${col.owned[x.e.id] ? ' · owned' : ''}</span>
         <span class="flags">${x.flags.map(f => `<span class="flag ${f.k}">${f.k === 'jp' ? '' : f.k === 'low' ? '⚠ ' : '▼ '}${esc(f.t)}</span>`).join('')}</span></span>
       <span class="price">${priceHtml(x.pi)}</span></button>
-      <span class="deal-links small"><a href="${esc(cardmarketUrl(c))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open on Cardmarket' : 'Find on Cardmarket'}</a>${x.jp ? ` · <a href="${esc(cardmarketUrl(x.jp.c, c.name))}" target="_blank" rel="noopener noreferrer">${x.jp.c.cmId ? 'Japanese print on Cardmarket' : 'Search Cardmarket for the Japanese print'}</a> <span class="muted">(${esc(x.jp.c.set_name)} ${esc(x.jp.c.number)})</span>` : ''}</span></li>`; };
+      <span class="deal-links small"><a href="${esc(cardmarketUrl(c))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open on Cardmarket' : 'Find on Cardmarket'}</a></span>
+      ${x.jp ? `<div class="deal-jp">${safeUrl(x.jp.c.img_s) ? `<img src="${esc(safeUrl(x.jp.c.img_s))}" alt="Japanese print" loading="lazy">` : '<span class="ph"></span>'}
+        <span class="small"><b>Japanese print:</b> ${esc(x.jp.c.set_name)} ${esc(x.jp.c.number)} · ${esc(tierLabel[rarityTier(x.jp.c.rarity, x.jp.c.set_id)] || x.jp.c.rarity || '')}<br>
+        <span class="muted">Same artist and rarity — check the picture matches before buying.</span><br>
+        <a href="${esc(cardmarketUrl(x.jp.c, c.name))}" target="_blank" rel="noopener noreferrer">${x.jp.c.cmId ? 'Open on Cardmarket' : 'Search Cardmarket'}</a> ·
+        <button type="button" class="linkbtn" data-act="deal-reject" data-en="${esc(c.id)}" data-jp="${esc(x.jp.c.id)}">Not the same card</button></span></div>` : ''}</li>`; };
   return `<section class="panel deals" aria-labelledby="deals-h">
     <div class="row" style="justify-content:space-between;align-items:flex-start"><div><h2 id="deals-h">Deals</h2>
       <p class="muted small" style="margin:0">Cards trading below their recent Cardmarket average${cfg.jp ? ', and cheaper Japanese prints by the same artist' : ''}. These are market averages, not individual listings — use them to time a purchase, then check the copies on Cardmarket.</p></div></div>
@@ -1760,7 +1782,9 @@ function sanitizeState(st) {
   Object.keys(collections).forEach(id => { if (!order.includes(id)) order.push(id); });
   const labelPrices = {};
   for (const [k, v] of Object.entries(st.labelPrices || {})) if (/^[A-Za-z0-9._-]{1,60}\|[a-z]*$/.test(k) && v > 0 && v < 1e5) labelPrices[k] = Math.round(v * 100) / 100;
-  return { cards, collections, order, labelPrices, ...sanitizeVendor(st, cards), activeId:collections[st.activeId] ? st.activeId : order[0] || null };
+  const jpReject = {};
+  for (const [k, v] of Object.entries(st.jpReject || {})) if (ID_RE.test(k) && !BAD_KEYS.has(k) && Array.isArray(v)) { const ok = v.filter(x => typeof x === 'string' && ID_RE.test(x)).slice(0, 50); if (ok.length) jpReject[k] = ok; }
+  return { cards, collections, order, labelPrices, jpReject, ...sanitizeVendor(st, cards), activeId:collections[st.activeId] ? st.activeId : order[0] || null };
 }
 $('#e-restore-file').addEventListener('change', async e => {
   const file = e.target.files[0]; e.target.value = ''; if (!file) return;
@@ -1791,6 +1815,7 @@ $('#e-restore-file').addEventListener('change', async e => {
     }
     S.activeId ||= S.order[0];
     S.labelPrices = { ...incoming.labelPrices, ...S.labelPrices };
+    for (const [k, v] of Object.entries(incoming.jpReject || {})) S.jpReject = { ...S.jpReject, [k]:[...new Set([...(S.jpReject?.[k] || []), ...v])] };
     mergeVendor(incoming);
   }
   initVendorState();
@@ -2292,6 +2317,12 @@ document.addEventListener('click', e => {
     case 'match-custom': matchCustom(); break;
     case 'deals-scan': scanDeals(); break;
     case 'deals-stop': UI.dealsAbort?.abort(); break;
+    case 'deal-reject': {
+      const en = t.dataset.en, jpId = t.dataset.jp; S.jpReject ||= {};
+      (S.jpReject[en] ||= []).includes(jpId) || S.jpReject[en].push(jpId); save();
+      if (UI.deals) UI.deals.rows = UI.deals.rows.map(x => x.c.id !== en || x.jp?.c.id !== jpId ? x : { ...x, jp:null, flags:x.flags.filter(f => f.k !== 'jp') })
+        .filter(x => x.flags.some(f => f.k !== 'low'));
+      renderView(); toast('Hidden. Scan again to look for another Japanese print.', 'success'); break; }
     case 'sort-value': e.stopPropagation(); UI.listSort = UI.listSort === 'value' ? 'binder' : 'value'; renderView(); break;
     case 'refresh-one': (async () => { const eid = UI.infoId, id = cardIdOf(eid);
       try { if (S.cards[id]?.price?.td) S.cards[id].price.td.fetched = ''; await tcgdexPrices([id]); if (!S.cards[id]?.price?.td && S.cards[id]?.src !== 'tcgdex') { const [c] = await apiFetchAll(`id:"${id}"`).catch(() => []); if (c) mergeCard(c); } save(); await loadFx(); openInfo(eid); renderProgress(); toast(S.cards[id]?.price ? 'Price updated' : 'Still no price for this card', S.cards[id]?.price ? 'success' : 'warn'); }
