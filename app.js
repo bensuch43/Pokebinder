@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.1.0',
+  version: '3.1.1',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -457,7 +457,13 @@ function recordSnapshot(col) {
 }
 const fmtPrice = pi => !pi ? '—' : pi.gbp != null ? GBP.format(pi.gbp) : NATIVE[pi.cur].format(pi.native);
 /* prices.pokemontcg.io redirect links no longer load, so link to each marketplace's own search instead. */
-const cardmarketUrl = c => c?.name ? `https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=${encodeURIComponent(c.name)}` : '';
+/* Cardmarket product page when TCGdex gave us the product id (Products?idProduct=…), otherwise a name search.
+   Japanese/Korean/Chinese cards fall back to searching the English name you pass as `fallbackName`, as Cardmarket lists them in English. */
+const cardmarketUrl = (c, fallbackName) => c?.cmId > 0 ? `https://www.cardmarket.com/en/Pokemon/Products?idProduct=${c.cmId}`
+  : (fallbackName || (!c?.lang && c?.name)) ? `https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=${encodeURIComponent(fallbackName || c.name)}` : '';
+/* Cardmarket product id from a TCGdex card: card-level, first variant that has one, or the price record. */
+const cmIdOf = j => [j?.thirdParty?.cardmarket, ...(j?.variants_detailed || []).map(v => v?.thirdParty?.cardmarket), j?.pricing?.cardmarket?.idProduct]
+  .map(Number).find(n => Number.isInteger(n) && n > 0 && n < 1e9) || null;
 const tcgplayerUrl = c => c?.name ? `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(`${c.name} ${c.set_name || ''}`.trim())}` : '';
 const QUALITY = { good:'Good data', fallback:'Fallback figure', stale:'Stale price' };
 function qualityText(pi) {
@@ -666,6 +672,8 @@ async function scanDeals() {
   try {
     await loadFx();
     const ids = [...new Set(entries.map(e => e.cardId))];
+    const needId = list => list.forEach(id => { const k = S.cards[id]; if (k && !k.cmId && k.price?.td) k.price.td.fetched = ''; });   // re-fetch once to pick up Cardmarket product ids
+    needId(ids);
     await tcgdexPrices(ids, (n, t) => prog(`Checking Cardmarket prices… ${n} / ${t}`), ac.signal);
     const jp = new Map();
     if (cfg.jp) {
@@ -675,6 +683,7 @@ async function scanDeals() {
         await Promise.all(en.slice(i, i + 6).map(async c => { try { jp.set(c.id, await jpAlternatives(c, ac.signal)); } catch (e) { if (e.name === 'AbortError') throw e; } prog(`Looking for Japanese prints… ${++n} / ${en.length}`); }));
       }
       const alt = [...new Set([...jp.values()].flat().map(c => c.id))];
+      needId(alt);
       if (alt.length) await tcgdexPrices(alt, (n, t) => prog(`Pricing Japanese prints… ${n} / ${t}`), ac.signal);
     }
     const rows = [];
@@ -710,7 +719,7 @@ function dealsHtml(col) {
       <span class="t"><b>${esc(c.name)}${v && v !== 'normal' ? ` <span class="vtag">${esc(VARIANTS[v])}</span>` : ''}</b><span class="small muted">${esc(c.set_name)} · ${esc(c.number)}${col.owned[x.e.id] ? ' · owned' : ''}</span>
         <span class="flags">${x.flags.map(f => `<span class="flag ${f.k}">${f.k === 'jp' ? '' : f.k === 'low' ? '⚠ ' : '▼ '}${esc(f.t)}</span>`).join('')}</span></span>
       <span class="price">${priceHtml(x.pi)}</span></button>
-      <span class="deal-links small"><a href="${esc(cardmarketUrl(c))}" target="_blank" rel="noopener noreferrer">Find on Cardmarket</a>${x.jp ? ` · <a href="${esc(cardmarketUrl({ name:`${c.name} Japanese` }))}" target="_blank" rel="noopener noreferrer">Japanese print</a> <span class="muted">(${esc(x.jp.c.set_name)} ${esc(x.jp.c.number)})</span>` : ''}</span></li>`; };
+      <span class="deal-links small"><a href="${esc(cardmarketUrl(c))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open on Cardmarket' : 'Find on Cardmarket'}</a>${x.jp ? ` · <a href="${esc(cardmarketUrl(x.jp.c, c.name))}" target="_blank" rel="noopener noreferrer">${x.jp.c.cmId ? 'Japanese print on Cardmarket' : 'Search Cardmarket for the Japanese print'}</a> <span class="muted">(${esc(x.jp.c.set_name)} ${esc(x.jp.c.number)})</span>` : ''}</span></li>`; };
   return `<section class="panel deals" aria-labelledby="deals-h">
     <div class="row" style="justify-content:space-between;align-items:flex-start"><div><h2 id="deals-h">Deals</h2>
       <p class="muted small" style="margin:0">Cards trading below their recent Cardmarket average${cfg.jp ? ', and cheaper Japanese prints by the same artist' : ''}. These are market averages, not individual listings — use them to time a purchase, then check the copies on Cardmarket.</p></div></div>
@@ -965,7 +974,7 @@ function priceBoxHtml(c, variant) {
       ${t ? ` Trend: 7-day average ${t.pct >= 0 ? '+' : ''}${t.pct}% vs 30-day.` : ''}</div>
     ${rows ? `<table class="ptable small"><thead><tr><th>Cardmarket</th><th>Price</th><th>Dated</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
     ${tcp}
-    <div class="row"><button class="btn sm" data-act="refresh-one">${ic('refresh', 'sm')}Refresh this price</button>${cmUrl ? `<a class="small" href="${esc(cmUrl)}" target="_blank" rel="noopener noreferrer" title="Searches Cardmarket for “${esc(c.name)}” — pick ${esc(c.set_name || 'the set')} ${esc(c.number || '')}">Find on Cardmarket</a>` : ''}</div></div>`;
+    <div class="row"><button class="btn sm" data-act="refresh-one">${ic('refresh', 'sm')}Refresh this price</button>${cmUrl ? (c.cmId ? `<a class="small" href="${esc(cmUrl)}" target="_blank" rel="noopener noreferrer">Open on Cardmarket</a>` : `<a class="small" href="${esc(cmUrl)}" target="_blank" rel="noopener noreferrer" title="Searches Cardmarket for “${esc(c.name)}” — pick ${esc(c.set_name || 'the set')} ${esc(c.number || '')}">Find on Cardmarket</a>`) : ''}</div></div>`;
 }
 
 /* ==========================================================================
@@ -1024,7 +1033,7 @@ async function tdToCard(j, lang = 'en', signal) {
     series:(lang !== 'en' ? TD_LANGS[lang] + (set?.serie ? ' · ' : '') : '') + (set?.serie || ''), release_date:/^\d{4}-\d{2}-\d{2}$/.test(set?.rel) ? set.rel : '',
     artist:String(j.illustrator || ''), rarity:j.rarity && j.rarity !== 'None' ? String(j.rarity) : '', dex:j.dexId?.[0] ?? null,
     supertype:isMon ? 'Pokémon' : /trainer/i.test(cat) ? 'Trainer' : /energy/i.test(cat) ? 'Energy' : cat, img_s:img ? img + '/low.webp' : '', img_l:img ? img + '/high.webp' : '',
-    custom:false, src:'tcgdex', tdId:String(j.id), ...(lang !== 'en' ? { lang } : {}), ...(variants.length ? { variants } : {}),
+    custom:false, src:'tcgdex', tdId:String(j.id), ...(cmIdOf(j) ? { cmId:cmIdOf(j) } : {}), ...(lang !== 'en' ? { lang } : {}), ...(variants.length ? { variants } : {}),
     ...(cm ? { price:{ td:tdPrice(cm), fetched:new Date().toISOString() } } : {}) };
 }
 /* Fetch full details for brief TCGdex cards, 8 at a time. */
@@ -1093,6 +1102,7 @@ async function tcgdexPrices(ids, onProgress, signal) {
       if (!c.tdId && !c.lang) c.tdId = await tcgdexIdFor(c);
       if (c.tdId) {
         const j = await tdJson(c.lang || 'en', `/cards/${encodeURIComponent(c.tdId)}`, signal), cm = j?.pricing?.cardmarket;
+        if (j && cmIdOf(j)) c.cmId = cmIdOf(j);
         if (cm) { c.price ||= {}; c.price.td = tdPrice(cm); c.price.fetched = c.price.td.fetched; got++; }
       }
     } catch { /* offline or TCGdex down: keep what we have */ }
@@ -1169,6 +1179,7 @@ function mergeCard(c) {
   else if (c.price && old?.price) m.price = { ...old.price, ...c.price, td:c.price.td || old.price.td };
   if (old?.src === 'tcgdex' && !c.src) { m.src = 'tcgdex'; if (old.img_s && !c.img_s) { m.img_s = old.img_s; m.img_l = old.img_l; } }
   if (old?.tdId && !m.tdId) m.tdId = old.tdId;
+  if (old?.cmId && !m.cmId) m.cmId = old.cmId;
   S.cards[c.id] = m;
 }
 const artistSource = c => c.artist_assigned ? 'assigned by you' : c.artist_tcgdex ? 'TCGdex' : (c.artist ? 'API' : '');
@@ -1699,6 +1710,7 @@ function sanitizeCard(k, c) {
   if (typeof c.tdId === 'string' && /^[A-Za-z0-9._-]{1,50}$/.test(c.tdId)) out.tdId = c.tdId;
   if (c.lang && TD_LANGS[c.lang] && c.lang !== 'en') out.lang = c.lang;
   if (c.src === 'tcgdex') out.src = 'tcgdex';
+  if (Number.isInteger(c.cmId) && c.cmId > 0 && c.cmId < 1e9) out.cmId = c.cmId;
   if (Array.isArray(c.variants)) out.variants = c.variants.filter(v => ['normal','holo','reverse','first'].includes(v));
   const pr = c.price;
   if (pr && typeof pr === 'object') {
