@@ -18,7 +18,10 @@ const METHODS = { cash:'Cash', card:'Card', other:'Other' };
 /* Print language matters when selling, not for the binder side (a card's artwork is the same in every language). */
 const LANGS = { en:'English', ja:'Japanese', de:'German', fr:'French', it:'Italian', es:'Spanish', pt:'Portuguese', nl:'Dutch', pl:'Polish', ko:'Korean', zh:'Chinese' };
 const LSHORT = { en:'EN', ja:'JP', de:'DE', fr:'FR', it:'IT', es:'ES', pt:'PT', nl:'NL', pl:'PL', ko:'KR', zh:'CN' };
-const langOf = x => LANGS[x?.lang] ? x.lang : 'en';
+/* A card added from a Japanese/Korean/Chinese search IS that language: its lots always carry it, and its price is already
+   for that language, so the language % below is never applied on top. */
+const cardLang = id => { const l = S.cards[id]?.lang; return !l ? null : l.startsWith('zh') ? 'zh' : LANGS[l] ? l : null; };
+const langOf = x => cardLang(x?.cardId) || (LANGS[x?.lang] ? x.lang : 'en');
 /* Market prices come from English-language listings; this is your % for other languages (default 100 = same). */
 const langFactor = lang => { const p = +S.vendor?.langAdj?.[lang]; return lang && lang !== 'en' && p > 0 ? p / 100 : 1; };
 const VTABS = { stock:'Stock', sell:'Sell', buy:'Buy', trade:'Trade', ledger:'Ledger' };
@@ -41,7 +44,7 @@ function vendorCardIds() {
 /* ---------- stock primitives ---------- */
 const findLot = (cardId, v, c, lang = 'en') => Object.values(S.stock).find(l => l.cardId === cardId && l.v === v && (l.c || '') === (c || '') && langOf(l) === (LANGS[lang] ? lang : 'en'));
 function addToStock(cardId, v, c, q, cost, src, lang = 'en') {
-  v = VARIANTS[v] && v !== 'any' ? v : 'normal'; c = CONDITIONS.includes(c) ? c : ''; lang = LANGS[lang] ? lang : 'en';
+  v = VARIANTS[v] && v !== 'any' ? v : 'normal'; c = CONDITIONS.includes(c) ? c : ''; lang = cardLang(cardId) || (LANGS[lang] ? lang : 'en');
   let l = findLot(cardId, v, c, lang);
   if (l) {
     // weighted average cost; if either side's cost is unknown, keep the known one (approximation, documented)
@@ -52,7 +55,7 @@ function addToStock(cardId, v, c, q, cost, src, lang = 'en') {
   return l;
 }
 function takeFromStock(lotId, q) { const l = S.stock[lotId]; if (!l) return 0; const n = Math.min(l.q, q); l.q -= n; if (l.q <= 0) delete S.stock[lotId]; return n; }
-const mktFor = (cardId, v, lang) => { const g = priceOf(S.cards[cardId], v)?.gbp; return g != null ? round2(g * langFactor(lang)) : null; };
+const mktFor = (cardId, v, lang) => { const g = priceOf(S.cards[cardId], v)?.gbp; return g != null ? round2(g * (cardLang(cardId) ? 1 : langFactor(lang))) : null; };
 const mktBadge = (cardId, v) => { const pi = priceOf(S.cards[cardId], v); return pi ? priceDot(pi) + trendTag(pi) : ''; };
 const lotMarket = l => mktFor(l.cardId, l.v, langOf(l));
 const lotAsk = l => l.price > 0 ? l.price : rulePrice({ id:l.cardId, v:l.v, lang:langOf(l) });
@@ -388,7 +391,8 @@ function openLot(lotId, newCardId) {
   $('#lot-img').innerHTML = thumb(id);
   $('#lot-v').innerHTML = variantsOf(c).map(v => `<option value="${v}"${v === (l?.v || primaryVariant(c)) ? ' selected' : ''}>${VARIANTS[v]}</option>`).join('');
   $('#lot-c').value = l?.c || 'NM'; $('#lot-q').value = l?.q || 1;
-  $('#lot-l').innerHTML = Object.entries(LANGS).map(([k, n]) => `<option value="${k}"${k === (l ? langOf(l) : (S.vendor.defLang || 'en')) ? ' selected' : ''}>${n}</option>`).join('');
+  $('#lot-l').innerHTML = Object.entries(LANGS).map(([k, n]) => `<option value="${k}"${k === (cardLang(id) || (l ? langOf(l) : (S.vendor.defLang || 'en'))) ? ' selected' : ''}>${n}</option>`).join('');
+  $('#lot-l').disabled = !!cardLang(id);   // fixed for cards that are themselves Japanese/Korean/Chinese
   $('#lot-cost').value = l?.cost != null ? l.cost.toFixed(2) : ''; $('#lot-price').value = l?.price != null ? l.price.toFixed(2) : '';
   $('#lot-del').classList.toggle('hidden', !l); $('#lot-save').textContent = l ? 'Save' : 'Add to stock';
   lotMarketNote(); $('#dlg-lot').showModal();
@@ -396,7 +400,7 @@ function openLot(lotId, newCardId) {
 }
 function lotMarketNote() {
   const id = UI.lot?.cardId, v = $('#lot-v').value, lang = $('#lot-l').value || 'en', m = mktFor(id, v, lang), rp = rulePrice({ id, v, lang });
-  $('#lot-market').innerHTML = `Market ${m != null ? GBP.format(m) : '—'}${lang !== 'en' && langFactor(lang) !== 1 ? ` (${Math.round(langFactor(lang) * 100)}% for ${LANGS[lang]})` : ''} ${priceAge(id)} · selling rule gives ${rp != null ? GBP.format(rp) : '—'}`;
+  $('#lot-market').innerHTML = `Market ${m != null ? GBP.format(m) : '—'}${cardLang(id) ? ` (${LANGS[cardLang(id)]} card — priced as ${LANGS[cardLang(id)]} already)` : lang !== 'en' && langFactor(lang) !== 1 ? ` (${Math.round(langFactor(lang) * 100)}% for ${LANGS[lang]})` : ''} ${priceAge(id)} · selling rule gives ${rp != null ? GBP.format(rp) : '—'}`;
   $('#lot-price').placeholder = rp != null ? rp.toFixed(2) : '£';
 }
 $('#lot-v').addEventListener('change', lotMarketNote);

@@ -1,9 +1,9 @@
 /* PokéBinder Studio service worker
    - App shell: network-first and revalidated with GitHub every time (cache:'no-cache'), so a new
      upload shows up on the next launch instead of after GitHub's 10-minute HTTP cache; offline falls back to cache
-   - Card images (images.pokemontcg.io): cache-first, capped
+   - Card images (images.pokemontcg.io, assets.tcgdex.net): cache-first, capped
    - API calls: always network (the app keeps its own card cache in IndexedDB) */
-const VERSION = 'pb-v3.1.3';
+const VERSION = 'pb-v3.2.0';
 const SHELL = ['./', './index.html', './app.js', './vendor.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
 const IMG_CACHE = 'pb-img-v1';
 const IMG_MAX = 3000;   // ~30–60 MB of small card images
@@ -22,7 +22,7 @@ async function trim(cache) {
 self.addEventListener('fetch', e => {
   const req = e.request; if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.hostname === 'images.pokemontcg.io') {
+  if (url.hostname === 'images.pokemontcg.io' || url.hostname === 'assets.tcgdex.net') {
     e.respondWith(caches.open(IMG_CACHE).then(async cache => {
       const hit = await cache.match(req); if (hit) return hit;
       try {

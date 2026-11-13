@@ -102,3 +102,10 @@ All code fixes are done in v2.4. The remaining actions are yours:
 - **No new hosts:** card searches and details for new sets and other languages come from `api.tcgdex.net`, already allowed by the Content Security Policy. Card images load from `assets.tcgdex.net` over HTTPS (images were already allowed from any HTTPS host).
 - **Stored data:** TCGdex cards are normalised into the same fields as before and pass the same restore checks; the new `lang` and `src` fields are allow-listed values only.
 - **Backups:** set and search caches are now left out of backup files, which keeps them small. They rebuild themselves.
+
+## v3.2 addendum
+
+- **Share links:** a new optional field carries a TCGdex image path. It must match `^[A-Za-z0-9._-]{1,12}(/[A-Za-z0-9._-]{1,40}){2,3}$` with no `..`, and is only ever appended to `https://assets.tcgdex.net/`. Tested with `../../x`, `javascript:alert(1)` and an over-long path: all rejected.
+- **Hostile card data:** re-tested with script-injection text in TCGdex names, set names, numbers, rarities, image links and Cardmarket IDs. Nothing executed and there were no Content Security Policy violations.
+- **Service worker:** now also caches images from `assets.tcgdex.net` (images only; API responses are still never cached).
+- **Restore:** per-collection target prices are allow-listed (known card, positive number under 1,000,000). Saved Deals results and lookups are not included in backups.

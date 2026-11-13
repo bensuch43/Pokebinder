@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.1
+# PokéBinder Studio v3.2
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,19 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## What's new in v3.2
+
+- **Deals results are saved** per collection and survive closing the app. After each scan, rows that are new or whose flags changed since the previous scan are tagged **New**.
+- **Target prices:** set "Your target price" in a card's ⓘ panel. Deals flags the card (★, listed first) when its price is at or below the target, whatever the drop threshold.
+- **Japanese prints side by side:** the English and Japanese pictures are shown together with both prices. **Not the same card** hides a pairing, with Undo, and a "hidden Japanese matches" list lets you restore any.
+- **Vendor:** a card added from a Japanese, Korean or Chinese search is always treated as that language (tag on stock and stickers), and its price is used as-is. The language % in Vendor settings only applies to English cards you mark as another language.
+- **Share links** now carry pictures for new-set and Japanese cards.
+- **Offline:** TCGdex card images are saved for offline use, alongside the older image source.
+- **Reliability:** TCGdex requests retry twice when the service is busy, and a refresh or scan tells you how many cards couldn't be checked.
+- **Storage:** Settings shows saved lookups and offline images. **Clear caches and unused cards** clears lookups, unused cards, saved Deals results and the image cache. Old lookups also expire by themselves (30 days).
+- **Phone usability:** all buttons, links and form controls are at least 44px high on touch screens, minimum text size is 12px, and the green ▲ is darker in light mode.
+- **Deliberate exception:** captions overlaid on card thumbnails stay at 10–11.5px, because larger text would cover the artwork.
 
 ## Prices (GBP)
 
