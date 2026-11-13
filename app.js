@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.2.0',
+  version: '3.3.0',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -1055,10 +1055,10 @@ const tdBriefSet = b => b.id.slice(0, b.id.length - String(b.localId).length - 1
 /* One set's details + card index, cached (7 days; 1 day for sets under a month old, which TCGdex is still filling in). */
 async function tdSet(lang, id, signal) {
   S.tdSetCache ||= {}; const key = `${tdLang(lang)}:${id}`, hit = S.tdSetCache[key];
-  if (hit && Date.now() - hit.ts < (Date.now() - Date.parse(hit.rel || 0) < 30 * 864e5 ? 864e5 : 7 * 864e5)) return hit;
+  if (hit && hit.v === 2 && Date.now() - hit.ts < (Date.now() - Date.parse(hit.rel || 0) < 30 * 864e5 ? 864e5 : 7 * 864e5)) return hit;
   const j = await tdJson(lang, `/sets/${encodeURIComponent(id)}`, signal); if (!j) return null;
-  const m = {}; for (const c of j.cards || []) if (c?.id && c.localId != null) m[normNo(c.localId)] = { id:String(c.id), name:String(c.name || ''), localId:String(c.localId) };
-  const out = S.tdSetCache[key] = { ts:Date.now(), id:String(j.id), name:String(j.name || id), serie:String(j.serie?.name || ''), rel:String(j.releaseDate || '').slice(0, 10), code:String(j.abbreviation?.official || ''), m };
+  const m = {}; for (const c of j.cards || []) if (c?.id && c.localId != null) m[normNo(c.localId)] = { id:String(c.id), name:String(c.name || ''), localId:String(c.localId), ...(safeUrl(c.image) ? { img:safeUrl(c.image) } : {}) };
+  const out = S.tdSetCache[key] = { v:2, ts:Date.now(), id:String(j.id), name:String(j.name || id), serie:String(j.serie?.name || ''), rel:String(j.releaseDate || '').slice(0, 10), code:String(j.abbreviation?.official || ''), m };
   save(); return out;
 }
 async function tdSetIndex(tdSetId) { return (await tdSet('en', tdSetId))?.m || null; }   // used by price matching
@@ -1148,7 +1148,7 @@ async function tdSearch(mode, term, lang, onProgress, signal, keep = () => true)
   return { cards:cards.sort(SORTS.release), total, truncated, note };
 }
 async function tcgdexIdFor(c) {
-  const sets = [...(PT_TO_TD[c.set_id] || []), ...Object.entries(S.tcgdexSetMap || {}).filter(([, pt]) => pt === c.set_id).map(([td]) => td)];
+  const sets = [...(Object.hasOwn(PT_TO_TD, c.set_id) ? PT_TO_TD[c.set_id] : []), ...Object.entries(S.tcgdexSetMap || {}).filter(([, pt]) => pt === c.set_id).map(([td]) => td)];
   for (const td of [...new Set(sets)]) {
     const m = await tdSetIndex(td).catch(() => null); const e = m?.[normNo(c.number)];
     if (e && normName(e.name) === normName(c.name)) return e.id;   // same card name on both sides, or no match
@@ -1669,6 +1669,10 @@ $('#form-custom').addEventListener('submit', e => {
 /* ==========================================================================
    EXPORT / IMPORT
    ========================================================================== */
+/* Every export and share is grouped by set, sets in release order (undated sets last), cards in number order —
+   whatever sort the binder itself uses. The sort is stable, so printings of one card stay together. */
+const bySet = rows => [...rows].sort((x, y) => SORTS.release(x.c, y.c));
+const withPricesOpt = () => S.settings.exportPrices !== false;
 function exportFilters() {
   return { set:$('#e-set').value, rarity:$('#e-rarity').value, status:$('#e-status').value, text:$('#e-text').checked ? UI.filters.text : '' };
 }
@@ -1677,7 +1681,9 @@ function exportRows() {
   for (const cid of ids) {
     const col = S.collections[cid]; if (cid !== S.activeId) syncOwned(col);
     const L = cid === S.activeId ? UI.layout : computeLayout(col);
-    for (const c of L.cards) if (matches(c, col, f)) rows.push({ col, c, p:L.pos.get(c.id), own:!!col.owned[c.id], q:entryQty(col, c), sp:entrySpares(col, c) });
+    const part = [];
+    for (const c of L.cards) if (matches(c, col, f)) part.push({ col, c, p:L.pos.get(c.id), own:!!col.owned[c.id], q:entryQty(col, c), sp:entrySpares(col, c) });
+    rows.push(...bySet(part));
   }
   return rows;
 }
@@ -1705,24 +1711,26 @@ function updateExportCount() {
   $('#e-count').textContent = `${rows.length} card${rows.length === 1 ? '' : 's'} selected (${own} owned, ${rows.length - own} needed).`;
   const fmt = $('input[name=e-fmt]:checked').value;
   $('#e-copy').classList.toggle('hidden', fmt !== 'txt' && fmt !== 'link');
-  $('#e-prices-wrap').classList.toggle('hidden', fmt !== 'link');
+  $('#e-prices').checked = withPricesOpt();
   $('#e-go').innerHTML = fmt === 'link' ? `${ic('share', 'sm')}Share link` : `${ic('download', 'sm')}Download`;
   $('#e-go').disabled = !rows.length;
 }
 ['e-set','e-rarity','e-status','e-text'].forEach(id => $('#' + id).addEventListener('change', updateExportCount));
+$('#e-prices').addEventListener('change', e => { S.settings.exportPrices = e.target.checked; save(); });
 $('#e-scope').addEventListener('change', openExport);
 $$('input[name=e-fmt]').forEach(r => r.addEventListener('change', updateExportCount));
 
 const csvCell = v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
-function buildCsv(rows) {
+function buildCsv(rows, prices = withPricesOpt()) {
+  const PRICE_COLS = new Set(['paid_gbp_each','paid_date','price_gbp','price_native','price_currency','price_source','price_metric','price_date','fx_gbp_per_unit','fx_source','price_fetched']);
   const head = ['collection','binder_page','binder_slot','spread','side','owned','quantity','spares','printings_held','condition','paid_gbp_each','paid_date','name','variant','number','set_name','set_id','series','release_date','rarity','artist','artist_source','pokedex','card_id','price_gbp','price_native','price_currency','price_source','price_metric','price_date','fx_gbp_per_unit','fx_source','price_fetched'];
   const lines = rows.map(({ col, c, p, own, q, sp }) => { const s = p ? spreadOf(p.page, col.startRight) : {};
     const rec = col.copies?.[c.cardId] || {}, rv = c.variant ? rec[c.variant] || {} : {};
     const held = Object.entries(rec).filter(([, r]) => r?.q).map(([v, r]) => `${VARIANTS[v]}×${r.q}`).join('; ');
     const conds = c.variant ? rv.c || '' : [...new Set(Object.values(rec).map(r => r?.c).filter(Boolean))].join('/');
     const paid = c.variant ? rv.p || '' : (Object.values(rec).find(r => r?.p)?.p || ''), pdate = c.variant ? rv.d || '' : (Object.values(rec).find(r => r?.d)?.d || '');
-    return [col.name, p?.page, p?.slot, s.spread, s.side, own ? 'Y' : 'N', q, sp, held, conds, paid, pdate, c.name, c.variant ? VARIANTS[c.variant] : '', c.number, c.set_name, c.set_id, c.series, c.release_date, c.rarity, c.artist, artistSource(c), c.dex, c.cardId || c.id, ...priceCols(c)].map(csvCell).join(','); });
-  return '\uFEFF' + [head.join(','), ...lines].join('\r\n');   // BOM so Excel reads é correctly
+    return [col.name, p?.page, p?.slot, s.spread, s.side, own ? 'Y' : 'N', q, sp, held, conds, paid, pdate, c.name, c.variant ? VARIANTS[c.variant] : '', c.number, c.set_name, c.set_id, c.series, c.release_date, c.rarity, c.artist, artistSource(c), c.dex, c.cardId || c.id, ...priceCols(c)].filter((_, i) => prices || !PRICE_COLS.has(head[i])).map(csvCell).join(','); });
+  return '\uFEFF' + [head.filter(h => prices || !PRICE_COLS.has(h)).join(','), ...lines].join('\r\n');   // BOM so Excel reads é correctly
 }
 function priceCols(c) {
   const pi = priceOf(c); if (!pi) return ['', '', '', '', '', '', '', '', ''];
@@ -1730,17 +1738,17 @@ function priceCols(c) {
   return [pi.gbp != null ? pi.gbp.toFixed(2) : '', pi.native.toFixed(2), pi.cur, pi.src, pi.metric, pi.date, r ? r.toFixed(6) : '',
     parseFloat(S.settings.fx?.[pi.cur]) > 0 ? 'manual' : (S.fx ? `ECB ${S.fx.date}` : ''), (pi.fetched || '').slice(0, 10)];
 }
-function buildText(rows) {
+function buildText(rows, prices = withPricesOpt()) {
   const f = exportFilters(), label = f.status === 'needed' ? 'Want list' : f.status === 'owned' ? 'Owned' : f.status === 'spare' ? 'Trade list' : 'Checklist';
   let out = '', curCol = null, curSet = null;
   for (const { col, c, own, sp } of rows) {
     if (col !== curCol) { const n = rows.filter(r => r.col === col).length; out += `${out ? '\n' : ''}${col.name} — ${label} (${n})\n${'='.repeat(Math.min(60, col.name.length + label.length + 10))}\n`; curCol = col; curSet = null; }
     if (c.set_id !== curSet) { out += `\n${c.set_name}${c.release_date ? ` (${c.release_date.slice(0,4)})` : ''}\n`; curSet = c.set_id; }
-    const pi = priceOf(c);
+    const pi = prices ? priceOf(c) : null;
     out += `  ${f.status === 'spare' ? `${sp}× ` : own ? '[x] ' : '[ ] '}${c.number ? c.number.padEnd(7) : ''} ${dispName(c)}${c.rarity ? ' · ' + c.rarity : ''}${pi ? ' · ' + fmtPrice(pi) : ''}\n`;
   }
   const v = sumValue(rows.map(r => r.c));
-  if (v.priced) out += `\nTotal ≈ ${GBP.format(v.gbp)} for ${v.priced} priced card(s). ${(S.settings.priceSource || CONFIG.priceSource) === 'tcgplayer' ? 'TCGplayer' : 'Cardmarket'} prices, price dates ${dateRange(v)}; converted to GBP at ${S.fx ? 'ECB rate of ' + S.fx.date : 'your rate'}.\n`;
+  if (prices && v.priced) out += `\nTotal ≈ ${GBP.format(v.gbp)} for ${v.priced} priced card(s). ${(S.settings.priceSource || CONFIG.priceSource) === 'tcgplayer' ? 'TCGplayer' : 'Cardmarket'} prices, price dates ${dateRange(v)}; converted to GBP at ${S.fx ? 'ECB rate of ' + S.fx.date : 'your rate'}.\n`;
   return out + `\nExported ${today()} from PokéBinder Studio\n`;
 }
 function download(name, content, type) {
@@ -1760,13 +1768,13 @@ $('#e-go').addEventListener('click', () => {
   if (fmt === 'link') { shareRows(rows); return; }
   if (fmt === 'csv') download(exportName('csv'), buildCsv(rows), 'text/csv;charset=utf-8');
   else if (fmt === 'txt') download(exportName('txt'), buildText(rows), 'text/plain;charset=utf-8');
-  else download(exportName('json'), JSON.stringify(rows.map(({ col, c, p, own }) => ({ collection:col.name, binder_page:p?.page ?? null, binder_slot:p?.slot ?? null, owned:own, ...c })), null, 2), 'application/json');
+  else download(exportName('json'), JSON.stringify(rows.map(({ col, c, p, own }) => ({ collection:col.name, binder_page:p?.page ?? null, binder_slot:p?.slot ?? null, owned:own, ...(withPricesOpt() ? { ...c, price_gbp:priceOf(c)?.gbp != null ? Math.round(priceOf(c).gbp * 100) / 100 : null } : (({ price, ...rest }) => rest)(c)) })), null, 2), 'application/json');
   toast(`Exported ${rows.length} cards`, 'success');
 });
 $('#e-copy').addEventListener('click', async () => {
   try {
     const fmt = $('input[name=e-fmt]:checked').value;
-    await navigator.clipboard.writeText(fmt === 'link' ? await buildShareUrl(exportRows(), $('#e-prices').checked) : buildText(exportRows()));
+    await navigator.clipboard.writeText(fmt === 'link' ? await buildShareUrl(exportRows(), withPricesOpt()) : buildText(exportRows()));
     toast(fmt === 'link' ? 'Link copied — paste it into a message' : 'Copied to clipboard', 'success');
   }
   catch { toast('Clipboard not available — use Download instead', 'error'); }
@@ -2018,22 +2026,43 @@ async function pipeBytes(bytes, stream, maxOut = Infinity) {
   for (;;) { const { done, value } = await reader.read(); if (done) break; n += value.length; if (n > maxOut) { reader.cancel(); throw new Error('share link too large'); } chunks.push(value); }
   const out = new Uint8Array(n); let o = 0; chunks.forEach(c => { out.set(c, o); o += c.length; }); return out;
 }
+/* Format 2 keeps links short by sending card IDs only, grouped by set — no names, set names or picture paths.
+   The page that opens the link looks the details up (its own saved cards first, then the card databases).
+     line 1:  kind|collection name|date
+     P<set>   then  number[~variant][*qty][=pence][@lang],…   cards known to the Pokémon TCG API (id = set-number)
+     T<lang>/<set>  same item list                          cards only TCGdex has (new sets, Japanese…)
+     C<id>|name|number|set|variant|qty|pence                custom cards, which no database knows
+   Compressed when that's shorter. Formats 0 and 1 (older links) still open. */
+const KIND_CODE = { want:'w', trade:'t', list:'l', sale:'s' }, CODE_KIND = { w:'want', t:'trade', l:'list', s:'sale' };
+const V_CODE = { holo:'h', reverse:'r', first:'f' }, CODE_V = { h:'holo', r:'reverse', f:'first' };
+const clean = s => String(s ?? '').replace(/[|\n\r]/g, ' ').trim();
 async function buildShareUrl(rows, withPrices = true, kind) {
   const f = exportFilters?.() || {};
   kind ||= SHARE_KIND[f.status] || 'list';
-  const cols = [...new Set(rows.map(r => r.col.name))];
-  const payload = { v:1, k:kind, n:cols.length === 1 ? cols[0] : 'Several collections', d:today(),
-    a:rows.slice(0, 1500).map(({ c, sp, price }) => { const g = !withPrices ? null : price != null ? price : priceOf(c)?.gbp;
-      return [c.cardId || c.id, c.name, c.number, c.set_id, c.set_name, c.variant || '', kind === 'trade' || kind === 'sale' ? sp || 1 : 1, g != null ? Math.round(g * 100) / 100 : null, c.rarity || '', shareLang(c.lang), shareImg(c)]; }) };
-  const json = new TextEncoder().encode(JSON.stringify(payload));
-  let token;
-  if ('CompressionStream' in window) token = '1.' + b64u(await pipeBytes(json, new CompressionStream('deflate-raw')));
-  else token = '0.' + b64u(json);
+  const cols = [...new Set(rows.map(r => r.col.name))], groups = new Map(), customs = [];
+  for (const { c, sp, price } of bySet(rows).slice(0, 1500)) {
+    const id = c.cardId || c.id, g = !withPrices ? null : price != null ? price : priceOf(c)?.gbp;
+    const qty = kind === 'trade' || kind === 'sale' ? sp || 1 : 1, pence = g != null ? Math.round(g * 100) : null, cut = id.lastIndexOf('-');
+    const lotLang = S.cards[id]?.lang ? '' : (LANGS[c.lang] && c.lang !== 'en' ? c.lang : '');
+    const tail = `${V_CODE[c.variant] ? '~' + V_CODE[c.variant] : ''}${qty > 1 ? '*' + qty : ''}${pence != null ? '=' + pence : ''}${lotLang ? '@' + lotLang : ''}`;
+    const card = S.cards[id] || c, tdCut = (card.tdId || '').lastIndexOf('-');
+    const tdOwn = card.src === 'tcgdex' && tdCut > 0 && id === (card.lang ? `${card.lang}-${card.tdId}` : card.tdId);
+    let key, item;
+    if (card.custom || cut < 1 || /[,~*=@|\n]/.test(id)) { customs.push(`C${id}|${clean(c.name)}|${clean(c.number)}|${clean(c.set_name)}|${V_CODE[c.variant] || ''}|${qty}|${pence ?? ''}`); continue; }
+    if (tdOwn) { key = `T${card.lang || 'en'}/${card.tdId.slice(0, tdCut)}`; item = card.tdId.slice(tdCut + 1); }
+    else { key = `P${id.slice(0, cut)}`; item = id.slice(cut + 1); }
+    if (!groups.has(key)) groups.set(key, []); groups.get(key).push(item + tail);
+  }
+  const text = [`${KIND_CODE[kind] || 'l'}|${clean(cols.length === 1 ? cols[0] : 'Several collections')}|${today()}`, ...[...groups].map(([k, items]) => `${k}\n${items.join(',')}`), ...customs].join('\n');
+  const raw = new TextEncoder().encode(text);
+  let token = '3.' + b64u(raw);
+  if ('CompressionStream' in window) { const z = '2.' + b64u(await pipeBytes(raw, new CompressionStream('deflate-raw'))); if (z.length < token.length) token = z; }
   return `${location.origin}${location.pathname}#s=${token}`;
 }
 async function shareRows(rows, forceKind) {
   if (!rows.length) { toast('Nothing to share with these filters', 'warn'); return; }
-  const withPrices = $('#dlg-export').open ? $('#e-prices').checked : true;
+  rows = bySet(rows);
+  const withPrices = forceKind === 'sale' ? true : withPricesOpt();   // a for-sale list is pointless without prices
   const f = $('#dlg-export').open ? exportFilters() : null;
   const kind = forceKind || (f ? (SHARE_KIND[f.status] || 'list') : (rows.every(r => !r.own) ? 'want' : 'trade'));
   const url = await buildShareUrl(rows, withPrices, kind);
@@ -2046,12 +2075,13 @@ async function shareRows(rows, forceKind) {
   catch { prompt('Copy this link:', url); }
 }
 async function decodeShare(token) {
-  if (typeof token !== 'string' || token.length > 400000 || !/^[01]\.[A-Za-z0-9_-]+$/.test(token)) throw new Error('invalid link');
+  if (typeof token !== 'string' || token.length > 400000 || !/^[0-3]\.[A-Za-z0-9_-]+$/.test(token)) throw new Error('invalid link');
   let bytes = unb64u(token.slice(2));
-  if (token[0] === '1') {
+  if (token[0] === '1' || token[0] === '2') {
     if (!('DecompressionStream' in window)) throw new Error('this browser can\'t open compressed links — try Chrome, Edge or Safari 16.4+');
     bytes = await pipeBytes(bytes, new DecompressionStream('deflate-raw'), 4e6);   // guard against decompression bombs
   }
+  if (token[0] === '2' || token[0] === '3') return decodeShare2(new TextDecoder().decode(bytes));
   const j = JSON.parse(new TextDecoder().decode(bytes));
   if (!j || j.v !== 1 || !Array.isArray(j.a)) throw new Error('unrecognised link');
   const items = [];
@@ -2063,18 +2093,70 @@ async function decodeShare(token) {
   }
   return { kind:['want','trade','list','sale'].includes(j.k) ? j.k : 'list', name:str(j.n, 80) || 'A collection', date:/^\d{4}-\d{2}-\d{2}$/.test(j.d) ? j.d : '', items };
 }
+/* Format 2: IDs only. Everything is validated; names for non-custom cards are filled in later by resolveShare(). */
+function decodeShare2(text) {
+  const lines = text.split('\n'), [k, name, date] = (lines.shift() || '').split('|'), items = [];
+  const ITEM = /^([A-Za-z0-9._]{1,30})(?:~([hrf]))?(?:\*(\d{1,3}))?(?:=(\d{1,8}))?(?:@([a-z]{2}))?$/;
+  const push = (id, extra) => { if (items.length < 1500 && ID_RE.test(id) && !BAD_KEYS.has(id)) items.push({ id, name:'', number:'', set_id:'', set_name:'', rarity:'', img:'', ...extra }); };
+  for (let i = 0; i < lines.length; i++) {
+    const L = lines[i];
+    if (L[0] === 'C') { const p = L.slice(1).split('|');
+      push(p[0], { name:str(p[1], 120) || '?', number:str(p[2], 20), set_id:'custom-' + str(p[3], 40), set_name:str(p[3], 100) || 'Custom', variant:CODE_V[p[4]] || '',
+        n:Math.max(1, Math.min(999, parseInt(p[5], 10) || 1)), gbp:/^\d{1,8}$/.test(p[6] || '') ? +p[6] / 100 : null, lang:'', img:'-', done:true }); continue; }
+    const mP = /^P([A-Za-z0-9._-]{1,40})$/.exec(L), mT = /^T(en|ja|ko|zh-tw|zh-cn)\/([A-Za-z0-9._-]{1,40})$/.exec(L);
+    if (!mP && !mT) continue;
+    for (const part of (lines[++i] || '').split(',')) { const m = ITEM.exec(part); if (!m) continue;
+      const base = { variant:CODE_V[m[2]] || '', n:Math.max(1, Math.min(999, +(m[3] || 1))), gbp:m[4] != null ? +m[4] / 100 : null, lang:LANGS[m[5]] ? m[5] : '', number:m[1].replace(/^0+(?=\d)/, '') };
+      if (mP) push(`${mP[1]}-${m[1]}`, { ...base, set_id:mP[1], set_name:mP[1], src:'P' });
+      else push(`${mT[1] === 'en' ? '' : mT[1] + '-'}${mT[2]}-${m[1]}`, { ...base, set_id:(mT[1] === 'en' ? '' : mT[1] + '-') + mT[2], set_name:mT[2], src:'T', tdLang:mT[1], tdSet:mT[2], local:m[1], lang:shareLang(mT[1]) });
+    }
+  }
+  return { kind:CODE_KIND[k] || 'list', name:str(name, 80) || 'A collection', date:/^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '', items, pending:items.some(i => !i.done) };
+}
+/* Fill in names, set names, release dates and pictures: this device's saved cards first, then the card databases. */
+async function resolveShare(data) {
+  const fill = (i, c) => { i.name = c.name; i.number = c.number || i.number; i.set_name = c.set_name || i.set_name; i.rel = c.release_date || ''; i.rarity = c.rarity || ''; i.url = safeUrl(c.img_s); i.done = true; };
+  data.items.forEach(i => { if (!i.done && Object.hasOwn(S.cards, i.id)) fill(i, S.cards[i.id]); });
+  // cards from the Pokémon TCG API, 60 ids per request
+  const p = data.items.filter(i => !i.done && i.src === 'P');
+  for (let n = 0; n < p.length; n += CONFIG.priceBatch) {
+    try { const got = new Map((await apiFetchAll('(' + p.slice(n, n + CONFIG.priceBatch).map(i => `id:"${i.id}"`).join(' OR ') + ')')).map(c => [c.id, c]));
+      p.slice(n, n + CONFIG.priceBatch).forEach(i => { if (got.has(i.id)) fill(i, got.get(i.id)); }); } catch { break; }
+  }
+  // TCGdex: one request per set covers every card in it (also the fallback for anything the old API didn't return)
+  const bySetKey = new Map();
+  for (const i of data.items.filter(x => !x.done)) {
+    const cands = i.src === 'T' ? [[i.tdLang, i.tdSet]] : [...(Object.hasOwn(PT_TO_TD, i.set_id) ? PT_TO_TD[i.set_id] : []), i.set_id].map(s => ['en', s]);
+    for (const [lang, set] of cands) { const k = `${lang}/${set}`; if (!bySetKey.has(k)) bySetKey.set(k, { lang, set, items:[] }); bySetKey.get(k).items.push(i); }
+  }
+  await Promise.all([...bySetKey.values()].map(async g => {
+    try { const st = await tdSet(g.lang, g.set); if (!st) return;
+      for (const i of g.items) { const e = st.m[normNo(i.local || i.number)]; if (i.done || !e) continue;
+        fill(i, { name:e.name, number:i.number, set_name:st.name, release_date:st.rel, img_s:e.img ? e.img + '/low.webp' : (i.src === 'P' ? imgForId(i.id) : '') }); } } catch { /* offline: IDs are shown instead */ }
+  }));
+  data.items.forEach(i => { if (!i.done) { i.name = `Card ${i.number}`; i.unresolved = true; } });
+  data.items.sort((x, y) => (x.rel || '9999').localeCompare(y.rel || '9999') || x.set_id.localeCompare(y.set_id) || cmpNum(x.number, y.number));
+  data.pending = false;
+}
 /* Image URLs are derived from the card ID pattern, never taken from the link. */
 const shareLang = l => !l || l === 'en' ? '' : l.startsWith('zh') ? 'zh' : l;
 /* TCGdex images can't be rebuilt from the card id, so the link carries the asset path ("ja/SV/SV3/118"); '-' = no image. */
 const shareImg = c => { const m = /^https:\/\/assets\.tcgdex\.net\/(.+)\/low\.webp$/.exec(c.img_s || ''); return m ? m[1] : c.src === 'tcgdex' || c.lang ? '-' : ''; };
 const TD_IMG_RE = /^[A-Za-z0-9._-]{1,12}(\/[A-Za-z0-9._-]{1,40}){2,3}$/;
-const shareImgUrl = i => i.img === '-' ? '' : i.img ? `https://assets.tcgdex.net/${i.img}/low.webp` : imgForId(i.id);
+const shareImgUrl = i => i.url ? i.url : i.img === '-' ? '' : i.img ? `https://assets.tcgdex.net/${i.img}/low.webp` : imgForId(i.id);
 const imgForId = id => { const m = /^([a-z0-9.]+)-([A-Za-z0-9]+)$/.exec(id); return m && !id.startsWith('custom-') ? `https://images.pokemontcg.io/${m[1]}/${m[2]}.png` : ''; };
 async function openShare(token) {
   let data;
   try { data = await decodeShare(token); }
   catch (e) { toast(`Couldn't open that share link (${e.message}).`, 'error'); history.replaceState(null, '', location.pathname); render(); return; }
-  UI.share = data;
+  UI.share = data; renderShare(data);
+  if (data.pending) {
+    try { await resolveShare(data); }
+    catch { data.items.forEach(i => { if (!i.done) { i.name = `Card ${i.number}`; i.unresolved = true; } }); data.pending = false; }   // never leave the page stuck on "Loading…"
+    if (UI.share === data) renderShare(data);
+  }
+}
+function renderShare(data) {
   document.body.classList.add('sharing');
   ['.appbar', '#main', '.bottom-nav'].forEach(sel => $(sel).classList.add('hidden'));
   const colSets = S.order.map(cid => [S.collections[cid], new Set(S.collections[cid].cardIds)]);
@@ -2086,12 +2168,13 @@ async function openShare(token) {
   const title = data.kind === 'want' ? 'Want list' : data.kind === 'trade' ? 'Trade list' : data.kind === 'sale' ? 'Cards for sale' : 'Card list';
   const total = data.items.reduce((n, i) => n + (i.gbp || 0) * i.n, 0), priced = data.items.some(i => i.gbp != null);
   const groups = new Map(); data.items.forEach(i => { if (!groups.has(i.set_id)) groups.set(i.set_id, []); groups.get(i.set_id).push(i); });
-  const label = i => i.name + (i.variant && i.variant !== 'normal' ? ` (${VARIANTS[i.variant]})` : '') + (i.lang && i.lang !== 'en' ? ` · ${LANGS[i.lang]}` : '');
+  const label = i => (i.name || `${i.set_id} ${i.number}`) + (i.variant && i.variant !== 'normal' ? ` (${VARIANTS[i.variant]})` : '') + (i.lang && i.lang !== 'en' ? ` · ${LANGS[i.lang]}` : '');
   UI.shareText = `${data.name} — ${title}${data.date ? ` (${data.date})` : ''}\n` + [...groups.values()].map(g => `\n${g[0].set_name}\n` + g.map(i => `  ${i.n > 1 ? i.n + '× ' : ''}${i.number.padEnd(7)} ${label(i)}${i.gbp != null ? ' · ' + GBP.format(i.gbp) : ''}`).join('\n')).join('\n') + '\n';
   $('#share-view').innerHTML = `
     <div class="share-head"><span class="small muted">${ic('link', 'sm')} Shared from PokéBinder Studio</span>
       <h2>${esc(data.name)} — ${title}</h2>
       <span class="muted">${data.items.length} card${data.items.length === 1 ? '' : 's'}${data.date ? ` · shared ${esc(data.date)}` : ''}${priced ? ` · approx. <b class="price">${GBP.format(total)}</b> at the sender's prices` : ''}</span>
+      ${data.pending ? `<p class="small muted" role="status" style="margin:6px 0 0">Loading card names and pictures…</p>` : data.items.some(i => i.unresolved) ? `<p class="small muted" role="status" style="margin:6px 0 0">${data.items.filter(i => i.unresolved).length} card(s) couldn't be looked up (offline, or not in the card databases yet), so only their set and number are shown.</p>` : ''}
       <div class="row" style="margin-top:8px"><button class="btn" data-act="copy-share">${ic('copy', 'sm')}Copy as text</button><button class="btn primary" data-act="close-share">${S.order.length ? 'Open my collection' : 'Start my own collection'}</button></div>
       ${S.order.length ? `<p class="small muted" style="margin:6px 0 0">Highlights compare this list with the collections saved in your browser.</p>` : ''}
     </div>
@@ -2102,7 +2185,7 @@ async function openShare(token) {
         <div style="text-align:right">${i.n > 1 ? `<div class="small">×${i.n}</div>` : ''}${i.gbp != null ? `<div class="price">${GBP.format(i.gbp)}</div>` : ''}</div></div>`; }).join('')}</section>`).join('')}
     <p class="small muted">Prices are what the sender's app showed on ${esc(data.date || 'the day they shared')} (Cardmarket/TCGplayer via the Pokémon TCG API, in GBP). Fan-made tool, not affiliated with The Pokémon Company.</p>`;
   $('#share-view').classList.remove('hidden');
-  window.scrollTo({ top:0 });
+  if (data.pending || !data.scrolled) { window.scrollTo({ top:0 }); data.scrolled = true; }
 }
 function closeShare() {
   UI.share = null; history.replaceState(null, '', location.pathname);

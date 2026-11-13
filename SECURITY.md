@@ -109,3 +109,9 @@ All code fixes are done in v2.4. The remaining actions are yours:
 - **Hostile card data:** re-tested with script-injection text in TCGdex names, set names, numbers, rarities, image links and Cardmarket IDs. Nothing executed and there were no Content Security Policy violations.
 - **Service worker:** now also caches images from `assets.tcgdex.net` (images only; API responses are still never cached).
 - **Restore:** per-collection target prices are allow-listed (known card, positive number under 1,000,000). Saved Deals results and lookups are not included in backups.
+
+## v3.3 addendum: short share links
+
+- **New link format:** card IDs grouped by set, no names. Every item must match a strict pattern, IDs pass the same checks as before, quantities are capped at 999, and at most 1,500 items are read. Old formats still decode with their existing checks.
+- **Found and fixed during testing:** a crafted link naming a set `__proto__` crashed the name lookup and left the page stuck on "Loading…". Lookups now ignore inherited keys, and any lookup failure falls back to showing set and number. Re-tested with script-injection text in the collection name and custom-card fields: nothing executed.
+- **Privacy:** opening a link now asks the card databases for the listed card IDs. No personal data is sent, but those services can see which cards were looked up.

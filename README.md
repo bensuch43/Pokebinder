@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.2
+# PokéBinder Studio v3.3
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,13 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## What's new in v3.3
+
+- **Exports are always grouped by set, oldest set first,** then by card number. This applies to CSV, text, JSON and share links, whatever sort the binder uses. Sets with no release date (custom cards) come last. With "All collections", each collection is listed in turn and ordered this way inside.
+- **Include prices** is one switch for every export format, and the choice is remembered. When off: CSV drops the market-price columns and the paid columns, text drops prices and the total, JSON drops price data, and share links carry no prices. A for-sale list from Vendor always includes prices.
+- **Share links are about five times shorter.** A 25-card list went from about 1,080 characters to about 260; a 208-card list from about 5,500 to about 990. Links now carry card IDs only; the page that opens the link looks up names and pictures (cards saved on that device first, then the Pokémon TCG API, then TCGdex). If the person opening it is offline and doesn't have the cards saved, they see set codes and numbers only. Custom cards still travel with their names. Older links keep working.
+- **Truly short links** (a dozen characters) would need a server to store the list, which this app deliberately doesn't have.
 
 ## What's new in v3.2
 

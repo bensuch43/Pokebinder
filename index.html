@@ -685,12 +685,13 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
     </fieldset>
     <fieldset><legend>Format</legend>
       <div class="radio-cards">
-        <label><input type="radio" name="e-fmt" value="link"><span>Share link<small>A read-only page anyone can open — perfect for sending a want or trade list. Nothing is uploaded: the list travels inside the link.</small></span></label>
+        <label><input type="radio" name="e-fmt" value="link"><span>Share link<small>A read-only page anyone can open — perfect for sending a want or trade list. Nothing is uploaded: the list travels inside the link, and the page looks up names and pictures when it opens.</small></span></label>
         <label><input type="radio" name="e-fmt" value="csv" checked><span>CSV spreadsheet<small>Opens cleanly in Excel (UTF-8, binder page, variant, quantity and price columns).</small></span></label>
-        <label><input type="radio" name="e-fmt" value="txt"><span>Text list<small>Grouped by set — paste into a message. Can copy to clipboard.</small></span></label>
+        <label><input type="radio" name="e-fmt" value="txt"><span>Text list<small>Paste into a message. Can copy to clipboard.</small></span></label>
         <label><input type="radio" name="e-fmt" value="json"><span>JSON (filtered cards)<small>Machine-readable list of the cards above.</small></span></label>
       </div>
-      <label class="chk" id="e-prices-wrap"><input type="checkbox" id="e-prices" checked><span>Include prices in the share link</span></label>
+      <label class="chk" id="e-prices-wrap"><input type="checkbox" id="e-prices" checked><span>Include prices<small class="muted">Applies to every format. When off, CSV also leaves out what you paid.</small></span></label>
+      <p class="small muted" style="margin:6px 0 0">Every format is grouped by set, oldest set first, then by card number.</p>
     </fieldset>
     <fieldset><legend>Full backup</legend>
       <p class="small muted" style="margin:0 0 8px">Your data lives in this browser only. Back up regularly, and use this to move between devices. Your API key is never included.</p>
