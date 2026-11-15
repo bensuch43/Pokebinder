@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.7
+# PokéBinder Studio v3.7.2
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -118,6 +118,11 @@ Another website can't fill your Cardmarket basket, so the route is a Cardmarket 
 - **Quick paste:** the list is formatted the way Cardmarket accepts it for Pokémon (`1x Name Ability Attack…`), split into blocks of 150 lines. Tested in v3.6.1: set codes and plain names are rejected. **Pasted lines aren't pinned to a set.** Cardmarket matches "this card, any expansion" and may show a Japanese print as the sample picture, so edit each entry to the right set before running the Wizard.
 
 Wants entries accept any language unless you set one, so the Wizard may pick French or German copies if they're cheapest. Set English or Japanese only if you prefer. Japanese picks from "Any language" are marked so you can set the Japanese expansion. The temporary paste-test tool from v3.6.1 has been removed.
+
+**v3.7.1:**
+- **Rejected lines.** Cardmarket only matches its own spelling of attack names. In a 62-card test, 58 matched and the 4 rejections involved an older spelling ("Solarbeam"), the δ symbol, a hyphenated attack name and one Larvitar. Paste the red lines into **Some lines went red?** and the app makes alternatives to try: symbols removed, older spellings modernised, hyphens changed, and each attack on its own. Lines that match twice just show as "already added".
+- **v3.7.2: card names now match Cardmarket's.** Cardmarket adds things to card names that TCGdex leaves out: the level on Diamond & Pearl-era cards ("Larvitar LV.13") and "Delta Species" after δ ("Ekans δ Delta Species"). TCGdex has no levels, so the app checks the Pokémon TCG API once for each card from 2007–2010 and remembers the result.
+- **Lines marked ⧉** cover more than one different card with the same name and attacks; set each version separately on Cardmarket.
 
 ## What's new in v3.6
 

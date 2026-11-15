@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.7.0',
+  version: '3.7.2',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -123,7 +123,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 function normApi(c) {
   return { id:c.id, name:c.name || '?', number:String(c.number ?? ''), set_id:c.set?.id || 'unknown', set_name:c.set?.name || 'Unknown set',
     series:c.set?.series || '', release_date:(c.set?.releaseDate || '').replace(/\//g,'-'), artist:c.artist || '', rarity:c.rarity || '',
-    dex:c.nationalPokedexNumbers?.[0] ?? null, supertype:c.supertype || '', img_s:safeUrl(c.images?.small), img_l:safeUrl(c.images?.large), custom:false,
+    dex:c.nationalPokedexNumbers?.[0] ?? null, supertype:c.supertype || '', ...(/^\d{1,3}$/.test(c.level || '') ? { level:String(c.level) } : {}), img_s:safeUrl(c.images?.small), img_l:safeUrl(c.images?.large), custom:false,
     ...(variantsFromApi(c).length ? { variants:variantsFromApi(c), vEv:Object.fromEntries(variantsFromApi(c).map(v => [v, ['Pokémon TCG API']])) } : {}),
     ...(normPrice(c) ? { price:normPrice(c) } : {}) };   // omit when absent so a merge never wipes older prices
 }
@@ -1277,7 +1277,7 @@ function buildQuery(mode, term) {
   return /\s/.test(q) ? `name:"${q}"` : `name:${q.replace(/[^\p{L}\p{N}'.\-é]/gu, '')}*`;
 }
 async function apiFetchAll(query, onProgress, signal, limit = Infinity) {
-  const select = 'id,name,number,artist,rarity,supertype,nationalPokedexNumbers,set,images,tcgplayer,cardmarket';
+  const select = 'id,name,number,artist,rarity,supertype,nationalPokedexNumbers,set,images,tcgplayer,cardmarket,level';
   let page = 1, retries = 0, total = Infinity; const all = [];
   while (all.length < total) {
     const size = Math.min(CONFIG.pageSize, limit);
@@ -1796,6 +1796,20 @@ function watchHtml(col) {
    codes and plain names are rejected. A line matches the card "in any version and expansion", so the steps ask you to
    check versions. At most 150 lines per paste. */
 const CM_BLOCK = 150;
+/* Cardmarket's card names include things TCGdex leaves out: the level on Diamond & Pearl-era cards ("Larvitar LV.13")
+   and "Delta Species" after δ ("Ekans δ Delta Species"). Found by testing a 62-card list. */
+const cmName = c => `${c.name}${c.level && !/\bLV\./i.test(c.name) ? ` LV.${c.level}` : ''}${/\sδ$/.test(c.name) ? ' Delta Species' : ''}`;
+/* Levels come from the Pokémon TCG API (TCGdex has none). Only cards from the levelled era (2007–2010) are checked, once each. */
+async function fillLevels(ids) {
+  const need = ids.map(id => S.cards[id]).filter(c => c && !c.custom && c.src !== 'tcgdex' && !c.lang && !c.lvChecked && (c.release_date || '') >= '2007-05' && (c.release_date || '') < '2010-11');
+  for (let i = 0; i < need.length; i += CONFIG.priceBatch) {
+    const batch = need.slice(i, i + CONFIG.priceBatch);
+    try { const got = new Map((await apiFetchAll('(' + batch.map(c => `id:"${c.id}"`).join(' OR ') + ')')).map(c => [c.id, c]));
+      batch.forEach(c => { const g = got.get(c.id); if (g) { if (g.level) c.level = g.level; c.lvChecked = true; } }); }
+    catch { return; }   // old API unreachable: lines go without levels; the retry box can still help
+  }
+  if (need.length) save();
+}
 async function openCmSend() {
   const fitOnly = UI.completeFit?.size > 0, src = (UI.completeList || []).filter(x => !fitOnly || UI.completeFit.has(x));
   const list = src.filter(x => !S.cards[x.e.cardId]?.custom);
@@ -1805,6 +1819,7 @@ async function openCmSend() {
   $('#cmt-go').classList.add('hidden'); $('#dlg-cmtest').showModal();
   const byCard = new Map(); let n = 0;
   const ids = [...new Set(list.map(x => x.e.cardId))];
+  await fillLevels(ids);
   for (let i = 0; i < ids.length; i += 6) await Promise.all(ids.slice(i, i + 6).map(async id => {
     const c = S.cards[id]; let j = null;
     try { const tid = c.src === 'tcgdex' ? c.tdId : (c.tdId || await tcgdexIdFor(c)); j = tid ? await tdJson('en', `/cards/${encodeURIComponent(tid)}`) : null; } catch { /* listed below as missing */ }
@@ -1813,10 +1828,10 @@ async function openCmSend() {
   // one line per distinct card; printings of the same card (normal + reverse in master-set mode) share a line, so count them
   const lines = new Map();
   for (const x of list) { const c = S.cards[x.e.cardId], moves = byCard.get(c.id);
-    const text = `${c.name}${moves?.length ? ' ' + moves.join(' ') : ''}`, k = text.toLowerCase();
-    if (!lines.has(k)) lines.set(k, { text, q:0, items:[], missing:moves == null && c.supertype === 'Pokémon' });
+    const text = `${cmName(c)}${moves?.length ? ' ' + moves.join(' ') : ''}`, k = text.toLowerCase();
+    if (!lines.has(k)) lines.set(k, { text, name:cmName(c), moves:moves || [], q:0, items:[], missing:moves == null && c.supertype === 'Pokémon' });
     const L = lines.get(k); L.q++; L.items.push(x); }
-  UI.cmSend.rows = [...lines.values()]; renderCmSend();
+  UI.cmSend.rows = [...lines.values()]; UI.cmSend.rows.forEach(r2 => { r2.cards = new Set(r2.items.map(x => x.e.cardId)).size; }); renderCmSend();
 }
 function renderCmSend() {
   const T = UI.cmSend, rows = T.rows, blocks = [];
@@ -1836,16 +1851,46 @@ function renderCmSend() {
     <ol class="cmt-steps small" start="4"><li><b>Shopping Wizard:</b> choose <b>Reduce Shipments</b> for fewer sellers (or Reduce Price for the lowest total). <b>Languages:</b> entries allow any language unless you set one, so you may get French or German copies; set English or Japanese only if you prefer. Check shipping in your cart before paying.</li></ol>
     <a class="btn sm" href="https://www.cardmarket.com/en/Pokemon/Wants" target="_blank" rel="noopener noreferrer">Open Cardmarket Wants</a>
     ${missing ? `<p class="small" style="margin:10px 0 0"><b>${missing} Pokémon line${missing === 1 ? '' : 's'} have no attack names</b> (TCGdex didn't have them), so Cardmarket will probably reject ${missing === 1 ? 'it' : 'them'}. Add ${missing === 1 ? 'it' : 'them'} by hand.</p>` : ''}
+    ${rows.some(r2 => r2.cards > 1) ? `<p class="small" style="margin:10px 0 0"><b>${rows.filter(r2 => r2.cards > 1).length} line${rows.filter(r2 => r2.cards > 1).length === 1 ? ' covers' : 's cover'} more than one different card</b> with the same name and attacks (marked ⧉ below). Cardmarket keeps one “any version” entry for these, so after pasting set each version separately, or use Exact versions.</p>` : ''}
     ${blocks.map((b, i) => `<section class="cmt-block"><div class="row" style="justify-content:space-between;align-items:center"><b>${blocks.length > 1 ? `Block ${i + 1} of ${blocks.length}` : 'Paste this'} · ${b.length} line${b.length === 1 ? '' : 's'}</b><button type="button" class="btn sm primary" data-cmsend="${i}">${ic('copy', 'sm')}Copy</button></div>
       <pre class="mono small">${esc(b.map(r2 => `${r2.q}x ${r2.text}`).join('\n'))}</pre></section>`).join('')}
     <details class="cmt-check" open><summary class="small"><b>Your cards</b> (${rows.reduce((n, r2) => n + r2.items.length, 0)}) — exact set and number to pin</summary><ul class="cmt-cards">${rows.flatMap(r2 => r2.items).map(x => { const c = x.c, en = S.cards[x.e.cardId] || x.e;
-      return `<li>${safeUrl(c.img_s) ? `<img src="${esc(safeUrl(c.img_s))}" alt="" loading="lazy">` : '<span class="ph"></span>'}<span><b>${esc(dispName(x.e))}</b><span class="small muted">${x.jp ? `<b>Japanese print</b> ${esc(c.set_name)} ${esc(c.number)} — set the entry to that Japanese expansion` : `${esc(en.set_name)} · ${esc(en.number)}${x.e.variant && x.e.variant !== 'normal' ? ` · ${esc(VARIANTS[x.e.variant])}` : ''}`} · ${x.gbp != null ? GBP.format(x.gbp) : '—'}</span></span><a class="small" data-cmopen href="${esc(cardmarketUrl(c, en.name))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open' : 'Find'}<span class="sr"> ${esc(en.name)} on Cardmarket</span></a></li>`; }).join('')}</ul>
-      ${rows.flatMap(r2 => r2.items).some(x => !x.c.cmId) ? '<p class="small muted" style="margin:6px 0 0">“Find” rows have no direct product link yet, so they open a Cardmarket search: pick the matching set and number.</p>' : ''}</details>`;
+      const shared = rows.find(r2 => r2.items.includes(x))?.cards > 1;
+      return `<li>${safeUrl(c.img_s) ? `<img src="${esc(safeUrl(c.img_s))}" alt="" loading="lazy">` : '<span class="ph"></span>'}<span><b>${shared ? '<span title="Shares a pasted line with another card">⧉ </span>' : ''}${esc(dispName(x.e))}</b><span class="small muted">${x.jp ? `<b>Japanese print</b> ${esc(c.set_name)} ${esc(c.number)} — set the entry to that Japanese expansion` : `${esc(en.set_name)} · ${esc(en.number)}${x.e.variant && x.e.variant !== 'normal' ? ` · ${esc(VARIANTS[x.e.variant])}` : ''}`} · ${x.gbp != null ? GBP.format(x.gbp) : '—'}</span></span><a class="small" data-cmopen href="${esc(cardmarketUrl(c, en.name))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open' : 'Find'}<span class="sr"> ${esc(en.name)} on Cardmarket</span></a></li>`; }).join('')}</ul>
+      ${rows.flatMap(r2 => r2.items).some(x => !x.c.cmId) ? '<p class="small muted" style="margin:6px 0 0">“Find” rows have no direct product link yet, so they open a Cardmarket search: pick the matching set and number.</p>' : ''}</details>
+    <section class="cmt-retry"><h4>Some lines went red?</h4>
+      <p class="small muted" style="margin:0 0 6px">Cardmarket only matches its own spelling of attack names. Paste the rejected lines here and the app makes alternatives to try: symbols removed (δ, ★), older spellings modernised (Solarbeam → Solar Beam), hyphens changed, and each attack on its own. Lines that match twice just show as “already added”.</p>
+      <textarea id="cmt-rejected" class="inp mono" rows="4" placeholder="1x Cherubi Ram Solarbeam" aria-label="Lines Cardmarket rejected"></textarea>
+      <div class="row" style="margin-top:6px"><button type="button" class="btn sm" data-act="cm-retry">Make alternatives</button></div>
+      <div id="cmt-alt"></div></section>`;
 }
 document.addEventListener('click', e => { const a2 = e.target.closest?.('[data-cmopen]'); if (a2) a2.closest('li')?.classList.add('done'); });
 document.addEventListener('click', e => { const i = e.target.closest?.('[data-cmsend]')?.dataset.cmsend; if (i == null || !UI.cmSend?.rows) return;
   const text = UI.cmSend.rows.slice(+i * CM_BLOCK, (+i + 1) * CM_BLOCK).map(r2 => `${r2.q}x ${r2.text}`).join('\n');
   navigator.clipboard.writeText(text).then(() => toast('Copied — paste it into your Cardmarket wants list', 'success'), () => prompt('Copy this list:', text)); });
+
+/* Alternative spellings for lines Cardmarket rejected. Cardmarket's matching rules aren't published, so these are
+   reasonable guesses based on how its card text differs from TCGdex's (e.g. older printed spellings, the δ symbol). */
+const CM_SPELL = { solarbeam:'Solar Beam', thundershock:'Thunder Shock', thunderpunch:'Thunder Punch', firepunch:'Fire Punch', icepunch:'Ice Punch',
+  selfdestruct:'Self-Destruct', doubleslap:'Double Slap', sonicboom:'Sonic Boom', dynamicpunch:'Dynamic Punch', ancientpower:'Ancient Power',
+  dragonbreath:'Dragon Breath', extremespeed:'Extreme Speed', 'faint attack':'Feint Attack', 'hi jump kick':'High Jump Kick', softboiled:'Soft-Boiled',
+  vicegrip:'Vise Grip', poisonpowder:'Poison Powder', bubblebeam:'Bubble Beam', 'sand-attack':'Sand Attack', smokescreen:'Smokescreen', rockslide:'Rock Slide', 'rock slide':'Rockslide' };
+function cmAlternatives(line) {
+  const m = /^\s*(\d+)\s*x?\s+(.+?)\s*$/i.exec(line); if (!m) return [];
+  const q = m[1], text = m[2], row = UI.cmSend?.rows?.find(r2 => r2.text.toLowerCase() === text.toLowerCase());
+  const name = row ? row.name : text.split(' ')[0], moves = row ? row.moves : text.slice(name.length).trim().split(/\s{2,}/).filter(Boolean);
+  const sym = s => s.replace(/[δ★☆◇]/g, ' ').replace(/\s+/g, ' ').trim();
+  const spell = s => { let o = s; for (const [k, v] of Object.entries(CM_SPELL)) o = o.replace(new RegExp(`\\b${k.replace(/[-]/g, '\\-')}\\b`, 'ig'), v); return o; };
+  const hyph = s => [s.replace(/-/g, ' '), s.replace(/-/g, ''), s.replace(/-(\w)/g, (x, c) => '-' + c.toUpperCase())];
+  const fixes = s => [...new Set([s, sym(s), spell(sym(s)), ...hyph(spell(sym(s))), ...(/\sδ$/.test(s) ? [s + ' Delta Species'] : [])])];
+  const out = new Set();
+  for (const n of fixes(name)) {
+    for (const mv of fixes(moves.join(' '))) out.add(`${q}x ${n}${mv ? ' ' + mv : ''}`);
+    for (const one of moves) for (const mv of fixes(one)) out.add(`${q}x ${n} ${mv}`);   // each attack on its own
+  }
+  out.delete(`${q}x ${text}`);
+  return [...out].map(s => s.replace(/\s+/g, ' ').trim()).filter((s, i, arr) => arr.indexOf(s) === i);
+}
 
 /* ---------- custom cards → real TCGdex cards ---------- */
 const LANG_PREFIX = { japanese:'ja', korean:'ko', chinese:'zh-tw' };
@@ -2056,6 +2101,7 @@ function sanitizeCard(k, c) {
   if (typeof c.tdId === 'string' && /^[A-Za-z0-9._-]{1,50}$/.test(c.tdId)) out.tdId = c.tdId;
   if (c.lang && TD_LANGS[c.lang] && c.lang !== 'en') out.lang = c.lang;
   if (c.src === 'tcgdex') out.src = 'tcgdex';
+  if (/^\d{1,3}$/.test(c.level || '')) out.level = c.level; if (c.lvChecked) out.lvChecked = true;
   if (Number.isInteger(c.cmId) && c.cmId > 0 && c.cmId < 1e9) out.cmId = c.cmId;
   if (Array.isArray(c.variants)) out.variants = c.variants.filter(v => ['normal','holo','reverse','first'].includes(v));
   if (Array.isArray(c.vHide)) out.vHide = c.vHide.filter(v => V_ORDER.includes(v));
@@ -2814,6 +2860,14 @@ document.addEventListener('click', e => {
         .catch(e => toast(`Couldn't check TCGdex (${e.message})`, 'warn')).finally(() => { t.disabled = false; }); break; }
     case 'complete-jp': completeLookupJp(); break;
     case 'cm-send': openCmSend(); break;
+    case 'cm-retry': {
+      const alts = $('#cmt-rejected').value.split(/\n+/).map(s => s.trim()).filter(Boolean).slice(0, 60).map(l => ({ l, v:cmAlternatives(l) }));
+      const all = [...new Set(alts.flatMap(x => x.v))].slice(0, 150); UI.cmAlt = all;
+      $('#cmt-alt').innerHTML = all.length ? `<section class="cmt-block"><div class="row" style="justify-content:space-between;align-items:center"><b>Try these · ${all.length} line${all.length === 1 ? '' : 's'}</b><button type="button" class="btn sm primary" data-act="cm-alt-copy">${ic('copy', 'sm')}Copy</button></div>
+        <pre class="mono small">${esc(all.join('\n'))}</pre></section>${alts.some(x => !x.v.length) ? `<p class="small muted">No alternatives for: ${esc(alts.filter(x => !x.v.length).map(x => x.l).join(', '))}. Add ${alts.filter(x => !x.v.length).length === 1 ? 'it' : 'them'} by hand with Open.</p>` : ''}`
+        : '<p class="small muted">Paste one rejected line per row, e.g. “1x Cherubi Ram Solarbeam”.</p>';
+      break; }
+    case 'cm-alt-copy': navigator.clipboard.writeText((UI.cmAlt || []).join('\n')).then(() => toast('Copied — paste into the same wants list', 'success'), () => prompt('Copy these lines:', (UI.cmAlt || []).join('\n'))); break;
     case 'watch-review': reviewArtist(active().id, active().watch.artist); break;
     case 'deals-stop': UI.dealsAbort?.abort(); break;
     case 'deal-reject': {
