@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.7.2',
+  version: '3.8.0',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -672,7 +672,7 @@ function listHtml(col) {
 
 function overviewHtml(col) {
   const t = ownedTotals(col);
-  return `<div class="ov">${watchHtml(col)}${dealsHtml(col)}${completeHtml(col)}
+  return `<div class="ov">${watchHtml(col)}${dealsHtml(col)}${completeHtml(col)}${reprintsHtml(col)}
     <section class="panel"><div class="row" style="justify-content:space-between"><div><h2>Collection value</h2>
       <p class="muted small" style="margin:0">Recorded once a day from the latest prices you've fetched${col.history?.length ? ` · since ${esc(col.history[0].d)}` : ''}.</p></div>
       <div class="legend"><span>Owned value</span>${t.withPaid ? '<span class="paid">Paid</span>' : ''}</div></div>
@@ -1555,6 +1555,8 @@ $('#form-search').addEventListener('submit', async e => {
   UI.search.results = results; UI.search.extra = extra; UI.search.artist = mode === 'artist' ? term : '';
   UI.search.extraFilter = ''; $('#s-extra-filter').value = '';
   const have = new Set(active()?.cardIds || []);
+  const excl = active()?.excluded || {};
+  results.forEach(c => { if (excl[c.id]) { UI.search.badges.set(c.id, 'Reprint, excluded'); UI.search.noSel.add(c.id); } });
   UI.search.sel = new Set(results.filter(c => !have.has(c.id) && !UI.search.noSel.has(c.id)).map(c => c.id));
   UI.search.hideHave = false;
   if (!offline) {
@@ -1639,7 +1641,10 @@ $('#s-add').addEventListener('click', () => {
   }
   col.updated = Date.now(); save();
   $('#dlg-add').close(); UI.filters = { text:'', set:'all', status:'all', rarity:'all' }; render();
-  toast(`Added ${n} card${n === 1 ? '' : 's'} to "${col.name}"${assigned ? ` (${assigned} credited to ${UI.search.artist} by you)` : ''}`, 'success');
+  const keys = new Map(); let dup = 0;
+  for (const id of col.cardIds) { const c = S.cards[id]; if (!c || c.custom || !c.artist) continue; const k = `${normName(c.name)}|${normName(c.artist)}`; const s = keys.get(k); if (s && s !== c.set_id) dup++; else keys.set(k, c.set_id); }
+  toast(`Added ${n} card${n === 1 ? '' : 's'} to "${col.name}"${assigned ? ` (${assigned} credited to ${UI.search.artist} by you)` : ''}`, 'success',
+    dup && n ? { label:'Check reprints', fn:() => { UI.view = S.settings.view = 'sets'; UI.reprintsOpen = true; save(); render(); $('[data-act=rp-scan]')?.click(); } } : undefined);
 });
 $('#dlg-add').addEventListener('close', () => UI.search.abort?.abort());
 
@@ -1654,6 +1659,9 @@ document.addEventListener('change', e => {
   UI.complete.open = true; save(); renderView();
   if (k === 'jp' && e.target.checked) { const n = UI.layout.cards.filter(x => !col.owned[x.id] && jpEligible(S.cards[x.cardId], x.variant) && S.jpAlt?.[x.cardId]?.v !== 3).length; if (n && n <= 60) completeLookupJp(); }   // small lists: look up straight away
 });
+document.addEventListener('change', e => { const k = e.target.dataset?.rp; if (k == null || !UI.reprints?.pick) return;
+  e.target.checked ? UI.reprints.pick.add(k) : UI.reprints.pick.delete(k); const b = $('[data-act=rp-apply]'); if (b) { b.disabled = !UI.reprints.pick.size; b.textContent = `Exclude ${UI.reprints.pick.size} reprint${UI.reprints.pick.size === 1 ? '' : 's'}`; } });
+document.addEventListener('toggle', e => { if (e.target.classList?.contains('reprints')) UI.reprintsOpen = e.target.open; }, true);
 document.addEventListener('toggle', e => { if (e.target.classList?.contains('complete')) (UI.complete ||= { set:'all', budget:'' }).open = e.target.open; }, true);
 document.addEventListener('change', e => {
   const k = e.target.closest?.('[data-deal]')?.dataset.deal; if (!k) return;
@@ -1670,7 +1678,7 @@ function pruneCaches(all = false) {
   const sweep = (obj, maxAgeDays) => { for (const [k, v] of Object.entries(obj || {})) if (all || !v?.ts || Date.now() - v.ts > maxAgeDays * 864e5) { delete obj[k]; out.lookups++; } };
   sweep(S.tdSetCache, 30); sweep(S.jpAlt, 30); sweep(S.tcgdexCache, 30); sweep(S.tdSetsList, 7);
   if (all) { S.setsCache = null; S.gapCache = null; S.tdIndex = {}; S.dealsSaved = {}; }
-  const keep = new Set([...S.order.flatMap(id => S.collections[id].cardIds), ...(typeof vendorCardIds === 'function' ? vendorCardIds() : [])]);
+  const keep = new Set([...S.order.flatMap(id => [...S.collections[id].cardIds, ...Object.keys(S.collections[id].excluded || {})]), ...(typeof vendorCardIds === 'function' ? vendorCardIds() : [])]);
   if (!all) { Object.values(S.jpAlt || {}).forEach(v => v.ids.forEach(id => keep.add(id))); Object.values(S.dealsSaved || {}).forEach(d => d.rows.forEach(x => x.jp && keep.add(x.jp))); (S.gapCache?.ids || []).forEach(id => keep.add(id)); }
   for (const [id, c] of Object.entries(S.cards)) if (!keep.has(id) && (all || c.lang)) { delete S.cards[id]; out.cards++; }   // routine sweeps only drop orphaned Japanese candidates
   return out;
@@ -1685,7 +1693,8 @@ function showSince(html, actions = []) {
 }
 /* ---------- new-card watch: tells you when TCGdex lists new cards by the artist a collection follows ---------- */
 const briefInCol = (b, col) => { const set = tdBriefSet(b), pt = TCGDEX_SET_MAP[set] || S.tcgdexSetMap?.[set];
-  return col.cardIds.includes(b.id) || (pt && col.cardIds.includes(`${pt}-${String(b.localId).replace(/^0+(?=\d)/, '')}`)); };
+  const ptId = pt && `${pt}-${String(b.localId).replace(/^0+(?=\d)/, '')}`;
+  return col.cardIds.includes(b.id) || (ptId && col.cardIds.includes(ptId)) || !!col.excluded?.[b.id] || !!(ptId && col.excluded?.[ptId]); };
 async function checkWatch(col, force = false) {
   const w = col.watch; if (!w?.artist || (!force && Date.now() - (w.at || 0) < 20 * 36e5)) return null;
   const list = ((await tdJson('en', `/cards?illustrator=${encodeURIComponent(w.artist)}`)) || []).filter(b => b?.id && !isPocketSet(tdBriefSet(b)));
@@ -1835,7 +1844,9 @@ async function openCmSend() {
 }
 function renderCmSend() {
   const T = UI.cmSend, rows = T.rows, blocks = [];
-  for (let i = 0; i < rows.length; i += CM_BLOCK) blocks.push(rows.slice(i, i + CM_BLOCK));
+  // the same card needed from several sets can't be told apart in a paste (no set field), so those go to "add individually"
+  const paste = T.paste = rows.filter(r2 => r2.cards <= 1), solo = rows.filter(r2 => r2.cards > 1);
+  for (let i = 0; i < paste.length; i += CM_BLOCK) blocks.push(paste.slice(i, i + CM_BLOCK));
   const total = rows.reduce((n, r2) => n + r2.items.reduce((m, x) => m + (x.gbp || 0), 0), 0), missing = rows.filter(r2 => r2.missing).length;
   $('#cmt-body').innerHTML = `
     <p class="small" style="margin:0 0 8px">${T.fitOnly ? 'The cards within your budget' : 'Every card in the list'}: <b>${rows.reduce((n, r2) => n + r2.q, 0)} card${rows.length === 1 ? '' : 's'}</b>, ≈ ${GBP.format(total)} at your prices${T.skipped ? ` · ${T.skipped} custom card(s) left out` : ''}.</p>
@@ -1851,7 +1862,10 @@ function renderCmSend() {
     <ol class="cmt-steps small" start="4"><li><b>Shopping Wizard:</b> choose <b>Reduce Shipments</b> for fewer sellers (or Reduce Price for the lowest total). <b>Languages:</b> entries allow any language unless you set one, so you may get French or German copies; set English or Japanese only if you prefer. Check shipping in your cart before paying.</li></ol>
     <a class="btn sm" href="https://www.cardmarket.com/en/Pokemon/Wants" target="_blank" rel="noopener noreferrer">Open Cardmarket Wants</a>
     ${missing ? `<p class="small" style="margin:10px 0 0"><b>${missing} Pokémon line${missing === 1 ? '' : 's'} have no attack names</b> (TCGdex didn't have them), so Cardmarket will probably reject ${missing === 1 ? 'it' : 'them'}. Add ${missing === 1 ? 'it' : 'them'} by hand.</p>` : ''}
-    ${rows.some(r2 => r2.cards > 1) ? `<p class="small" style="margin:10px 0 0"><b>${rows.filter(r2 => r2.cards > 1).length} line${rows.filter(r2 => r2.cards > 1).length === 1 ? ' covers' : 's cover'} more than one different card</b> with the same name and attacks (marked ⧉ below). Cardmarket keeps one “any version” entry for these, so after pasting set each version separately, or use Exact versions.</p>` : ''}
+    ${solo.length ? `<section class="cmt-solo"><h4>Add these individually · ${solo.reduce((n, r2) => n + r2.items.length, 0)} card${solo.reduce((n, r2) => n + r2.items.length, 0) === 1 ? '' : 's'}</h4>
+      <p class="small muted" style="margin:0 0 6px">You need the same card (same name and attacks) from more than one set. A pasted line can't say which set, so Cardmarket would treat them as one “any version” entry. They're left out of the paste: <b>Open</b> each one and add it from its own page. They're also marked ⧉ under “Your cards”.</p>
+      <ul class="cmt-cards">${solo.flatMap(r2 => r2.items).map(x => { const c = x.c, en = S.cards[x.e.cardId] || x.e;
+        return `<li>${safeUrl(c.img_s) ? `<img src="${esc(safeUrl(c.img_s))}" alt="" loading="lazy">` : '<span class="ph"></span>'}<span><b>${esc(dispName(x.e))}</b><span class="small muted">${esc(en.set_name)} · ${esc(en.number)}${x.e.variant && x.e.variant !== 'normal' ? ` · ${esc(VARIANTS[x.e.variant])}` : ''}</span></span><a class="small" data-cmopen href="${esc(cardmarketUrl(c, en.name))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open' : 'Find'}<span class="sr"> ${esc(en.name)} on Cardmarket</span></a></li>`; }).join('')}</ul></section>` : ''}
     ${blocks.map((b, i) => `<section class="cmt-block"><div class="row" style="justify-content:space-between;align-items:center"><b>${blocks.length > 1 ? `Block ${i + 1} of ${blocks.length}` : 'Paste this'} · ${b.length} line${b.length === 1 ? '' : 's'}</b><button type="button" class="btn sm primary" data-cmsend="${i}">${ic('copy', 'sm')}Copy</button></div>
       <pre class="mono small">${esc(b.map(r2 => `${r2.q}x ${r2.text}`).join('\n'))}</pre></section>`).join('')}
     <details class="cmt-check" open><summary class="small"><b>Your cards</b> (${rows.reduce((n, r2) => n + r2.items.length, 0)}) — exact set and number to pin</summary><ul class="cmt-cards">${rows.flatMap(r2 => r2.items).map(x => { const c = x.c, en = S.cards[x.e.cardId] || x.e;
@@ -1866,7 +1880,7 @@ function renderCmSend() {
 }
 document.addEventListener('click', e => { const a2 = e.target.closest?.('[data-cmopen]'); if (a2) a2.closest('li')?.classList.add('done'); });
 document.addEventListener('click', e => { const i = e.target.closest?.('[data-cmsend]')?.dataset.cmsend; if (i == null || !UI.cmSend?.rows) return;
-  const text = UI.cmSend.rows.slice(+i * CM_BLOCK, (+i + 1) * CM_BLOCK).map(r2 => `${r2.q}x ${r2.text}`).join('\n');
+  const text = (UI.cmSend.paste || UI.cmSend.rows).slice(+i * CM_BLOCK, (+i + 1) * CM_BLOCK).map(r2 => `${r2.q}x ${r2.text}`).join('\n');
   navigator.clipboard.writeText(text).then(() => toast('Copied — paste it into your Cardmarket wants list', 'success'), () => prompt('Copy this list:', text)); });
 
 /* Alternative spellings for lines Cardmarket rejected. Cardmarket's matching rules aren't published, so these are
@@ -1890,6 +1904,74 @@ function cmAlternatives(line) {
   }
   out.delete(`${q}x ${text}`);
   return [...out].map(s => s.replace(/\s+/g, ' ').trim()).filter((s, i, arr) => arr.indexOf(s) === i);
+}
+
+/* ---------- identical reprints ----------
+   The same card reprinted in another set (e.g. Numel, EX Dragon 69 and EX Trainer Kit Latias 5) is one artwork, so one
+   slot is enough: the duplicate is excluded from the collection and any copies logged on it move to the card kept.
+   "Identical" = same name, artist, type, HP, abilities and attacks (with damage), and the same rarity type, so a Full Art
+   and a Rainbow are never merged. A different type or different numbers (e.g. Shelgon, Dragon 41 vs Dragon Majesty 43)
+   means a different card, which is kept. Card text comes from TCGdex and is remembered on the card (c.fp). */
+async function cardPrint(c) {
+  if (c.fp || c.custom || c.lang) return c.fp || null;
+  const tid = c.src === 'tcgdex' ? c.tdId : (c.tdId || await tcgdexIdFor(c)); if (!tid) return null;
+  const j = await tdJson('en', `/cards/${encodeURIComponent(tid)}`); if (!j) return null;
+  const parts = { types:(j.types || []).slice().sort().join('/'), hp:String(j.hp ?? ''), abil:(j.abilities || []).map(x => normName(x?.name)).join('+'),
+    atk:(j.attacks || []).map(x => `${normName(x?.name)}:${String(x?.damage ?? '').replace(/\s/g, '')}`).join('+'), art:normName(j.illustrator || c.artist) };
+  c.fpParts = parts; c.fp = [normName(c.name), parts.art, parts.types, parts.hp, parts.abil, parts.atk].join('|').slice(0, 400);
+  return c.fp;
+}
+const fpDiff = (a, b) => { const d = []; const A = a.fpParts || {}, B = b.fpParts || {};
+  if (A.types !== B.types) d.push(`type ${A.types || '?'} vs ${B.types || '?'}`); if (A.hp !== B.hp) d.push(`HP ${A.hp || '?'} vs ${B.hp || '?'}`);
+  if (A.abil !== B.abil) d.push('different abilities'); if (A.atk !== B.atk) d.push('different attacks or damage');
+  if (!d.length && !sameTier(a, b) && !sameTier(b, a)) d.push(`different rarity (${a.rarity || '—'} vs ${b.rarity || '—'})`);
+  return d; };
+async function findReprints(col, onProgress) {
+  const groups = new Map();
+  for (const id of col.cardIds) { const c = S.cards[id]; if (!c || c.custom || c.lang || !c.artist) continue;
+    const k = `${normName(c.name)}|${normName(c.artist)}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
+  const cand = [...groups.values()].filter(g => g.length > 1 && new Set(g.map(c => c.set_id)).size > 1), all = cand.flat();
+  let n = 0;
+  for (let i = 0; i < all.length; i += 6) await Promise.all(all.slice(i, i + 6).map(async c => { try { await cardPrint(c); } catch { /* unknown: never merged */ } onProgress?.(++n, all.length); }));
+  save();
+  const same = [], diff = [];
+  for (const g of cand) {
+    const left = g.filter(c => c.fp);
+    while (left.length) {
+      const c = left.shift(), twins = left.filter(o => o.fp === c.fp && o.set_id !== c.set_id && (sameTier(c, o) || sameTier(o, c)));
+      if (twins.length) { twins.forEach(t => left.splice(left.indexOf(t), 1)); same.push([c, ...twins]); }
+      else { const near = left.filter(o => o.set_id !== c.set_id); if (near.length) diff.push({ a:c, b:near[0], why:fpDiff(c, near[0]) }); }
+    }
+    g.filter(c => !c.fp).forEach(c => diff.push({ a:c, b:g.find(o => o !== c), why:['card text not available on TCGdex, so it can’t be compared'] }));
+  }
+  // keep the copy you own; otherwise the original (earliest release)
+  const held = c => Object.values(col.copies?.[c.id] || {}).reduce((s, r2) => s + (r2?.q || 0), 0);
+  return { same:same.map(g => { const keep = [...g].sort((x, y) => (held(y) - held(x)) || (x.release_date || '9999').localeCompare(y.release_date || '9999'))[0]; return { keep, drop:g.filter(c => c !== keep) }; }), diff };
+}
+function excludeReprint(col, dropId, keepId) {
+  if (!col.cardIds.includes(dropId) || dropId === keepId) return;
+  col.cardIds = col.cardIds.filter(x => x !== dropId);
+  const from = col.copies?.[dropId];
+  if (from) { const to = col.copies[keepId] ||= {};
+    for (const [v, r2] of Object.entries(from)) { const t = to[v] ||= { q:0 }; t.q = Math.min(999, (t.q || 0) + (r2.q || 0)); for (const k of ['c', 'p', 'd', 'l']) if (r2[k] != null && t[k] == null) t[k] = r2[k]; }
+    delete col.copies[dropId]; }
+  if (col.targets?.[dropId]) { col.targets[keepId] ??= col.targets[dropId]; delete col.targets[dropId]; }
+  (col.excluded ||= {})[dropId] = keepId; col.updated = Date.now(); syncOwned(col);
+}
+function reprintsHtml(col) {
+  const R = UI.reprints?.colId === col.id ? UI.reprints : null, ex = Object.entries(col.excluded || {}).filter(([d]) => S.cards[d]);
+  const pic = c => safeUrl(c.img_s) ? `<img src="${esc(safeUrl(c.img_s))}" alt="" loading="lazy">` : '<span class="ph"></span>';
+  const lbl = c => `${esc(c.set_name)} · ${esc(c.number)}`;
+  return `<details class="panel reprints"${UI.reprintsOpen ? ' open' : ''}><summary><span><b>Identical reprints</b>${ex.length ? ` · ${ex.length} excluded` : ''}</span></summary>
+    <p class="small muted" style="margin:0 0 8px">Finds the same card reprinted in another set — same name, artist, type, HP, attacks and rarity type — so you only need one. Cards that differ (e.g. a different type) are kept.</p>
+    ${R?.busy ? `<p class="small muted" role="status" id="rp-prog">Comparing cards…</p>` : `<button type="button" class="btn sm" data-act="rp-scan">${ic('search', 'sm')}Check this collection</button>`}
+    ${R && !R.busy ? (R.same.length ? `<h4>Identical — exclude the reprint</h4><ul class="rp-list">${R.same.map((g, i) => g.drop.map((d, k) => `<li><label class="chk" style="margin:0"><input type="checkbox" data-rp="${i}:${k}"${R.pick?.has(`${i}:${k}`) ? ' checked' : ''}><span class="rp-pair">${pic(g.keep)}<span><b>Keep</b> ${esc(g.keep.name)}<br><span class="small muted">${lbl(g.keep)}</span></span>${pic(d)}<span><b>Exclude</b> ${esc(d.name)}<br><span class="small muted">${lbl(d)}</span></span></span></label></li>`).join('')).join('')}</ul>
+        <button type="button" class="btn sm primary" data-act="rp-apply"${R.pick?.size ? '' : ' disabled'}>Exclude ${R.pick?.size || 0} reprint${R.pick?.size === 1 ? '' : 's'}</button>
+        <p class="small muted" style="margin:6px 0 0">Any copies you've logged on an excluded card move to the one kept. You can restore it below.</p>`
+      : '<p class="small" style="margin:8px 0 0">No identical reprints found.</p>')
+      + (R.diff.length ? `<details class="small" style="margin-top:8px"><summary>${R.diff.length} same-name card${R.diff.length === 1 ? '' : 's'} kept as different</summary><ul class="rp-diff">${R.diff.map(x => `<li><b>${esc(x.a.name)}</b> ${lbl(x.a)} vs ${lbl(x.b)} — ${esc(x.why.join(', '))}</li>`).join('')}</ul></details>` : '') : ''}
+    ${ex.length ? `<details class="small" style="margin-top:8px"><summary>${ex.length} excluded reprint${ex.length === 1 ? '' : 's'}</summary><ul class="rp-diff">${ex.map(([d, k]) => `<li><span><b>${esc(S.cards[d].name)}</b> ${lbl(S.cards[d])}${S.cards[k] ? ` — same as ${lbl(S.cards[k])}` : ''}</span><button type="button" class="btn sm ghost" data-act="rp-restore" data-id="${esc(d)}">Restore</button></li>`).join('')}</ul></details>` : ''}
+  </details>`;
 }
 
 /* ---------- custom cards → real TCGdex cards ---------- */
@@ -2101,6 +2183,7 @@ function sanitizeCard(k, c) {
   if (typeof c.tdId === 'string' && /^[A-Za-z0-9._-]{1,50}$/.test(c.tdId)) out.tdId = c.tdId;
   if (c.lang && TD_LANGS[c.lang] && c.lang !== 'en') out.lang = c.lang;
   if (c.src === 'tcgdex') out.src = 'tcgdex';
+  if (typeof c.fp === 'string' && c.fp.length <= 400) { out.fp = c.fp; if (c.fpParts && typeof c.fpParts === 'object') out.fpParts = Object.fromEntries(['types', 'hp', 'abil', 'atk', 'art'].map(k => [k, str(c.fpParts[k], 200)])); }
   if (/^\d{1,3}$/.test(c.level || '')) out.level = c.level; if (c.lvChecked) out.lvChecked = true;
   if (Number.isInteger(c.cmId) && c.cmId > 0 && c.cmId < 1e9) out.cmId = c.cmId;
   if (Array.isArray(c.variants)) out.variants = c.variants.filter(v => ['normal','holo','reverse','first'].includes(v));
@@ -2142,6 +2225,7 @@ function sanitizeState(st) {
       }
     }
     if (c.targets && typeof c.targets === 'object') { col.targets = {}; for (const [k, v] of Object.entries(c.targets)) if (cards[k] && !BAD_KEYS.has(k) && v > 0 && v < 1e6) col.targets[k] = Math.round(v * 100) / 100; }
+    if (c.excluded && typeof c.excluded === 'object') { col.excluded = {}; for (const [d, k] of Object.entries(c.excluded)) if (ID_RE.test(d) && ID_RE.test(k) && !BAD_KEYS.has(d) && cards[d]) col.excluded[d] = k; }
     if (c.completeOpts && typeof c.completeOpts === 'object') col.completeOpts = { mode:c.completeOpts.mode === 'value' ? 'value' : 'cheap', jp:!!c.completeOpts.jp };
     if (c.deals && typeof c.deals === 'object') col.deals = { scope:c.deals.scope === 'all' ? 'all' : 'needed', dip:[5, 10, 15, 20, 30].includes(c.deals.dip) ? c.deals.dip : 10,
       min:[0, 0.5, 1, 2, 5, 10].includes(c.deals.min) ? c.deals.min : 1, jp:c.deals.jp !== false, auto:c.deals.auto !== false };
@@ -2860,6 +2944,16 @@ document.addEventListener('click', e => {
         .catch(e => toast(`Couldn't check TCGdex (${e.message})`, 'warn')).finally(() => { t.disabled = false; }); break; }
     case 'complete-jp': completeLookupJp(); break;
     case 'cm-send': openCmSend(); break;
+    case 'rp-scan': { const col = active(); UI.reprints = { colId:col.id, busy:true }; UI.reprintsOpen = true; renderView();
+      findReprints(col, (k, t2) => { const el = $('#rp-prog'); if (el) el.textContent = `Comparing card text… ${k} / ${t2}`; })
+        .then(res => { UI.reprints = { colId:col.id, ...res, pick:new Set(res.same.flatMap((g, i) => g.drop.map((_, k) => `${i}:${k}`))) }; })
+        .catch(err => { UI.reprints = null; toast(`Couldn't compare cards (${err.message})`, 'warn'); })
+        .finally(() => { if (UI.reprints) UI.reprints.busy = false; renderView(); });
+      break; }
+    case 'rp-apply': { const col = active(), R = UI.reprints; if (!R?.pick?.size) break; const snap = snapshot(); let n = 0;
+      for (const key of R.pick) { const [i, k] = key.split(':').map(Number), g = R.same[i]; if (g?.drop[k]) { excludeReprint(col, g.drop[k].id, g.keep.id); n++; } }
+      UI.reprints = null; save(); render(); undoable(`Excluded ${n} identical reprint${n === 1 ? '' : 's'}`, snap); break; }
+    case 'rp-restore': { const col = active(), id = t.dataset.id; if (!col.excluded?.[id]) break; delete col.excluded[id]; if (!col.cardIds.includes(id)) col.cardIds.push(id); col.updated = Date.now(); syncOwned(col); save(); render(); toast('Restored to the collection', 'success'); break; }
     case 'cm-retry': {
       const alts = $('#cmt-rejected').value.split(/\n+/).map(s => s.trim()).filter(Boolean).slice(0, 60).map(l => ({ l, v:cmAlternatives(l) }));
       const all = [...new Set(alts.flatMap(x => x.v))].slice(0, 150); UI.cmAlt = all;

@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.7.2
+# PokéBinder Studio v3.8
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -108,6 +108,17 @@ What gets flagged, biggest saving first:
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
 
+## What's new in v3.8: identical reprints
+
+Overview → **Identical reprints** → **Check this collection** finds the same card reprinted in another set (e.g. Numel, EX Dragon 69 and EX Trainer Kit Latias 5) so you only need one.
+
+- **Identical** means the same name, artist, type, HP, abilities and attacks (including damage), and the same rarity type, so a Full Art and a Rainbow are never merged.
+- **Anything different is kept,** and listed with the reason. For example, Shelgon in Dragon 41 vs Dragon Majesty 43: type Colorless vs Dragon, HP 70 vs 80, different damage.
+- **Excluding:** identical pairs are ticked; **Exclude** removes the reprint from the collection. The app keeps the copy you own, otherwise the earliest release. Copies, condition, price paid, language and target price move to the card kept. Undo is available, and **Restore** puts an excluded card back.
+- **Excluded cards stay out of your way.** They start unticked in artist searches (labelled "Reprint, excluded"), the new-card watch treats them as already in the collection, and they no longer appear in Cost to complete, Deals or Send to Cardmarket.
+- **Card text** (type, HP, attacks) comes from TCGdex, one request per card, only for cards that share a name and artist with a card from another set. It's remembered, so later checks are instant. Cards TCGdex can't describe are never merged.
+- **Prompt:** after adding cards that might be reprints, the "Added" message offers **Check reprints**.
+
 ## What's new in v3.7: Send to Cardmarket
 
 Cost to complete has a **Send to Cardmarket** button. It sends the cards within your budget, or every card if no budget is set.
@@ -122,6 +133,7 @@ Wants entries accept any language unless you set one, so the Wizard may pick Fre
 **v3.7.1:**
 - **Rejected lines.** Cardmarket only matches its own spelling of attack names. In a 62-card test, 58 matched and the 4 rejections involved an older spelling ("Solarbeam"), the δ symbol, a hyphenated attack name and one Larvitar. Paste the red lines into **Some lines went red?** and the app makes alternatives to try: symbols removed, older spellings modernised, hyphens changed, and each attack on its own. Lines that match twice just show as "already added".
 - **v3.7.2: card names now match Cardmarket's.** Cardmarket adds things to card names that TCGdex leaves out: the level on Diamond & Pearl-era cards ("Larvitar LV.13") and "Delta Species" after δ ("Ekans δ Delta Species"). TCGdex has no levels, so the app checks the Pokémon TCG API once for each card from 2007–2010 and remembers the result.
+- **v3.7.3: the same card from several sets** (same name and attacks, e.g. a card and its reprint) is left out of the paste and listed under **Add these individually**, with an Open link for each set. A pasted line can't name a set, so Cardmarket would merge them into one "2x any version" entry. The normal and reverse holo of the same card still share one "2x" line in the paste.
 - **Lines marked ⧉** cover more than one different card with the same name and attacks; set each version separately on Cardmarket.
 
 ## What's new in v3.6
