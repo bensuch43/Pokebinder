@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.6.0',
+  version: '3.6.1',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -1759,7 +1759,8 @@ function completeHtml(col) {
       <label class="small">Set <select class="inp sm" data-complete="set"><option value="all">All sets (${all.length})</option>${[...sets].map(([id, n]) => `<option value="${esc(id)}"${UI.complete.set === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
       <label class="small">Budget £ <input class="inp sm" data-complete="budget" inputmode="decimal" placeholder="e.g. 50" value="${esc(UI.complete.budget)}" style="width:96px"></label>
       <label class="chk small" style="margin:0"><input type="checkbox" data-copt="jp"${o.jp ? ' checked' : ''}><span>Any language: use the matching Japanese print when cheaper</span></label>
-      <button type="button" class="btn sm" data-act="copy-buylist"${priced.length ? '' : ' disabled'}>${ic('copy', 'sm')}Copy buy list</button></div>
+      <button type="button" class="btn sm" data-act="copy-buylist"${priced.length ? '' : ' disabled'}>${ic('copy', 'sm')}Copy buy list</button>
+      <button type="button" class="btn sm ghost" data-act="cm-test"${priced.length ? '' : ' disabled'}>Test Cardmarket paste</button></div>
     ${o.jp && eligible.length ? (UI.completeBusy ? `<p class="small muted" role="status" id="complete-prog" style="margin:0">Looking up Japanese prints…</p>`
       : known < eligible.length ? `<p class="small" style="margin:0">Japanese prints checked for ${known} of ${eligible.length} cards. <button type="button" class="btn sm" data-act="complete-jp">Check the other ${eligible.length - known}</button></p>`
       : `<p class="small muted" style="margin:0">Japanese prints checked for all ${eligible.length} eligible cards (reverse holo and 1st edition slots use English prices). Compare the pictures before buying.</p>`) : ''}
@@ -1788,6 +1789,57 @@ function watchHtml(col) {
   return `<div class="watch-line small"><span>${ic('search', 'sm')} Watching for new <b>${esc(w.artist)}</b> cards${w.at ? ` · checked ${new Date(w.at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}` : ''}</span>
     <span class="row"><button type="button" class="btn sm" data-act="watch-check">Check now</button><button type="button" class="btn sm ghost" data-act="watch-review">Review ${esc(w.artist)} cards</button></span></div>`;
 }
+
+/* ---------- Cardmarket paste test (temporary) ----------
+   Before building "Send to Cardmarket", this checks which text format Cardmarket's wants list accepts for Pokémon,
+   and whether it picks the exact printing. It can't be automated (Cardmarket blocks bots and needs your login),
+   so it prepares a few of your cards in three formats for you to paste into a throwaway wants list. */
+const cmTestLines = { A:x => `1x ${x.name}${x.moves.length ? ' ' + x.moves.join(' ') : ''}`, B:x => `1 ${x.name}${x.code ? ' ' + x.code : ''} ${x.number}`, C:x => `1x ${x.name}` };
+const CM_FORMATS = { A:'Name + attacks (Cardmarket’s help-page format)', B:'Name + set code + number (Pokémon TCG Live export)', C:'Name only (expected to fail for Pokémon)' };
+async function openCmTest() {
+  const list = (UI.completeList || []).filter(x => !x.jp && !S.cards[x.e.cardId]?.custom).slice(0, 15);
+  if (!list.length) { toast('No English cards in the list to test with', 'warn'); return; }
+  UI.cmTest = { picks:new Set(list.slice(0, 5).map(x => x.e.cardId)), list, rows:null };
+  renderCmTest(); $('#dlg-cmtest').showModal();
+}
+function renderCmTest() {
+  const T = UI.cmTest;
+  $('#cmt-body').innerHTML = T.rows ? `
+    <ol class="cmt-steps small">
+      <li>On Cardmarket (logged in): <b>Wants → create a new list</b> called “PokeBinder test”.</li>
+      <li>Copy <b>block A</b>, paste it into the list’s add box and press the green <b>Add</b> button. Note what turns green and what turns red.</li>
+      <li>Open each added card in the list and check it’s the <b>same set and number</b> as below (not just the same name).</li>
+      <li>Repeat with <b>block B</b> and <b>block C</b> (a new list each time keeps it clear), then tell me the results. Delete the test lists afterwards.</li>
+    </ol>
+    <a class="btn sm" href="https://www.cardmarket.com/en/Pokemon/Wants" target="_blank" rel="noopener noreferrer">Open Cardmarket Wants</a>
+    ${Object.entries(CM_FORMATS).map(([k, label]) => `<section class="cmt-block"><div class="row" style="justify-content:space-between;align-items:center"><b>Block ${k}: ${esc(label)}</b><button type="button" class="btn sm" data-cmcopy="${k}">${ic('copy', 'sm')}Copy</button></div>
+      <pre class="mono small">${esc(T.rows.map(cmTestLines[k]).join('\n'))}</pre></section>`).join('')}
+    <section><b class="small">What each line should match</b><ul class="cmt-cards">${T.rows.map(x => `<li>${x.img ? `<img src="${esc(x.img)}" alt="" loading="lazy">` : '<span class="ph"></span>'}<span><b>${esc(x.name)}</b><span class="small muted">${esc(x.set)} · ${esc(x.number)}${x.code ? ` · code ${esc(x.code)}` : ' · <b>no set code found</b>'}${x.moves.length ? '' : ' · no attacks (Trainer/Energy)'}</span>${x.note ? `<span class="small muted">${esc(x.note)}</span>` : ''}</span></li>`).join('')}</ul></section>`
+  : `<p class="small muted" style="margin:0 0 8px">Pick up to 5 cards. A mix works best: a Pokémon that has been reprinted with the same attacks, a full-art or special version, and a Trainer.</p>
+    <ul class="cmt-pick">${T.list.map(x => `<li><label class="chk" style="margin:0"><input type="checkbox" data-cmpick="${esc(x.e.cardId)}"${T.picks.has(x.e.cardId) ? ' checked' : ''}><span><b>${esc(x.e.name)}</b> <span class="small muted">${esc(x.e.set_name)} · ${esc(x.e.number)}${x.e.rarity ? ' · ' + esc(x.e.rarity) : ''}</span></span></label></li>`).join('')}</ul>
+    <p class="small muted" id="cmt-status" role="status"></p>`;
+  $('#cmt-go').classList.toggle('hidden', !!T.rows);
+  $('#cmt-go').disabled = !T.picks.size || T.picks.size > 5;
+}
+async function buildCmTest() {
+  const T = UI.cmTest, ids = [...T.picks].slice(0, 5); $('#cmt-go').disabled = true;
+  const rows = [];
+  for (const id of ids) {
+    const c = S.cards[id]; $('#cmt-status').textContent = `Fetching attack names… ${rows.length + 1} / ${ids.length}`;
+    let j = null, note = '';
+    try { const tid = c.lang ? null : (c.src === 'tcgdex' ? c.tdId : (c.tdId || await tcgdexIdFor(c))); j = tid ? await tdJson('en', `/cards/${encodeURIComponent(tid)}`) : null; } catch (e) { note = `Couldn't reach TCGdex (${e.message}).`; }
+    if (!j && !note) note = 'TCGdex has no English record for this card, so attacks are missing.';
+    const st = j?.set?.id ? await tdSet('en', j.set.id).catch(() => null) : null;
+    const pt = (S.setsCache?.data || []).find(s => s.id === c.set_id)?.ptcgoCode || '';
+    rows.push({ name:c.name, number:c.number, set:c.set_name, img:safeUrl(c.img_s), code:(pt || st?.code || '').toUpperCase(), note,
+      moves:[...(j?.abilities || []).map(x => x?.name), ...(j?.attacks || []).map(x => x?.name)].filter(Boolean).map(s => String(s).replace(/[\n\r]/g, ' ').trim()) });
+  }
+  T.rows = rows; renderCmTest();
+}
+document.addEventListener('change', e => { const id = e.target.dataset?.cmpick; if (!id || !UI.cmTest) return; e.target.checked ? UI.cmTest.picks.add(id) : UI.cmTest.picks.delete(id);
+  $('#cmt-go').disabled = !UI.cmTest.picks.size || UI.cmTest.picks.size > 5; $('#cmt-status').textContent = UI.cmTest.picks.size > 5 ? 'Pick 5 or fewer.' : ''; });
+document.addEventListener('click', e => { const k = e.target.closest?.('[data-cmcopy]')?.dataset.cmcopy; if (!k || !UI.cmTest?.rows) return;
+  const text = UI.cmTest.rows.map(cmTestLines[k]).join('\n'); navigator.clipboard.writeText(text).then(() => toast(`Block ${k} copied`, 'success'), () => prompt('Copy this block:', text)); });
 
 /* ---------- custom cards → real TCGdex cards ---------- */
 const LANG_PREFIX = { japanese:'ja', korean:'ko', chinese:'zh-tw' };
@@ -2705,6 +2757,7 @@ $('#lb-logo').addEventListener('change', async e => {
 $('#lb-logo-rm').addEventListener('click', async () => { lblSet('logo', ''); await loadLogo(); syncLabelForm(); });
 /* Remember what each stock sticker says, so the app can tell you when the price has since moved. */
 function markPrinted() { const d = today(); for (const s of selectedStickers()) { const l = s.lotId && S.stock[s.lotId]; if (l && s.price != null) { l.printed = s.price; l.printedAt = d; } } save(); }
+$('#cmt-go').addEventListener('click', () => buildCmTest());
 $('#lb-go').addEventListener('click', () => { markPrinted(); L().fmt === 'sheet' ? printLabelSheet() : shareThermal(false); });
 $('#lb-dl').addEventListener('click', () => { markPrinted(); shareThermal(true); });
 window.addEventListener('afterprint', () => document.getElementById('lbl-page-style')?.remove());
@@ -2755,6 +2808,7 @@ document.addEventListener('click', e => {
           r2.fresh.length || (r2.first && r2.missing) ? { label:'Review', fn:() => reviewArtist(col.id, col.watch.artist) } : undefined); })
         .catch(e => toast(`Couldn't check TCGdex (${e.message})`, 'warn')).finally(() => { t.disabled = false; }); break; }
     case 'complete-jp': completeLookupJp(); break;
+    case 'cm-test': openCmTest(); break;
     case 'watch-review': reviewArtist(active().id, active().watch.artist); break;
     case 'deals-stop': UI.dealsAbort?.abort(); break;
     case 'deal-reject': {

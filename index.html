@@ -248,6 +248,9 @@ small{font-size:12px}
 .attn-list{list-style:none;margin:0 0 6px;padding:0;display:grid;gap:4px} .attn-list li{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 .attn-list .t{all:unset;cursor:pointer;display:grid;min-height:44px;align-content:center} .attn-list .t:focus-visible{outline:2px solid var(--accent)}
 .badge-n{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:var(--warn);color:#1c1505;font-size:12px;font-weight:800}
+.cmt-steps{margin:0 0 10px;padding-left:20px;display:grid;gap:6px} .cmt-block{margin-top:12px} .cmt-block pre{white-space:pre-wrap;word-break:break-word;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px;margin:6px 0 0}
+.cmt-cards,.cmt-pick{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px} .cmt-cards li{display:grid;grid-template-columns:40px minmax(0,1fr);gap:10px;align-items:center}
+.cmt-cards li > span{display:grid} .cmt-cards img,.cmt-cards .ph{width:40px;height:56px;border-radius:4px;object-fit:cover;background:var(--surface-2);display:block}
 .match-banner{margin-bottom:12px;border-left:3px solid var(--accent)} .match-banner summary{cursor:pointer}
 .plegend{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:5px} .plegend li{display:flex;align-items:baseline;gap:0} .plegend b{color:var(--text);margin-right:4px}
 .qual{padding:8px 10px;border-radius:8px;background:var(--surface)} .qual.good{border-left:3px solid var(--ok)} .qual.fallback{border-left:3px solid var(--warn)} .qual.stale{border-left:3px solid var(--danger)}
@@ -886,6 +889,11 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
   <div class="dlg-f"><button class="btn danger hidden" id="lot-del"><svg class="i sm"><use href="#i-trash"/></svg>Remove</button><span style="flex:1"></span><button class="btn" id="lot-sell"><svg class="i sm"><use href="#i-plus"/></svg>Sell</button><button class="btn primary" id="lot-save">Save</button></div>
 </div></dialog>
 
+<dialog id="dlg-cmtest"><div class="dlg">
+  <div class="dlg-h"><h3>Cardmarket paste test</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <div class="dlg-b" id="cmt-body"></div>
+  <div class="dlg-f"><button class="btn" data-close>Close</button><button class="btn primary" id="cmt-go">Prepare test</button></div>
+</div></dialog>
 <dialog id="dlg-confirm"><form method="dialog" class="dlg">
   <div class="dlg-h"><h3 id="cf-title">Are you sure?</h3></div>
   <div class="dlg-b"><p id="cf-msg" style="margin:0"></p></div>
