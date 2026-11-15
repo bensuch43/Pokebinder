@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.4
+# PokéBinder Studio v3.5
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,21 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## What's new in v3.5
+
+**Collectors**
+- **New-card watch.** In a collection's settings, set "Watch for new cards by artist" (a collection created from an artist search follows that artist automatically). Once a day, when you open the app, it checks TCGdex and tells you about cards by that artist that weren't there before; **Review** runs the artist search with cards you already have hidden. Overview shows the watch with **Check now**. The first check records what's there, so you're only told about cards added after that; it also says how many TCGdex cards by that artist aren't in the collection.
+- **Cost to complete** (Overview): needed cards cheapest first, with the total, a set filter and a budget box ("£50 buys the cheapest 23 of 41", highlighted). **Copy buy list** copies the cards within budget as text.
+- **Since you last looked.** If you've scanned Deals for a collection before, it re-checks once a day when you open the app and shows a banner when targets are hit or new deals appear. Untick "Re-check once a day" in Deals to stop it. This only happens when the app is opened; notifications while it's closed would need a server.
+
+**Vendors**
+- **Check tab** (first in Vendor): type a printed code or name, see market, your selling price (sticker rule), your buying offer and how many you have in stock, with printing buttons. Sell, Buy and Trade in add the card straight to those screens. Vendor searches now include new sets from TCGdex.
+- **Needs attention** (Stock tab):
+  - lots not sold for N days (default 90), with a 10% mark-down;
+  - lots with a fixed price X% (default 15) away from your sticker rule, with **Use rule**;
+  - lots whose sticker no longer matches the asking price, with **Reprint these** (a new sticker source, "Stock whose price changed since its sticker").
+  The app now remembers the price each stock sticker was printed at, and when a lot last sold.
 
 ## What's new in v3.4
 

@@ -24,14 +24,14 @@ const cardLang = id => { const l = S.cards[id]?.lang; return !l ? null : l.start
 const langOf = x => cardLang(x?.cardId) || (LANGS[x?.lang] ? x.lang : 'en');
 /* Market prices come from English-language listings; this is your % for other languages (default 100 = same). */
 const langFactor = lang => { const p = +S.vendor?.langAdj?.[lang]; return lang && lang !== 'en' && p > 0 ? p / 100 : 1; };
-const VTABS = { stock:'Stock', sell:'Sell', buy:'Buy', trade:'Trade', ledger:'Ledger' };
+const VTABS = { check:'Check', stock:'Stock', sell:'Sell', buy:'Buy', trade:'Trade', ledger:'Ledger' };
 const round2 = n => Math.round(n * 100) / 100;
 const vNum = v => { const n = parseFloat(String(v ?? '').replace(/[£,\s]/g, '')); return Number.isFinite(n) ? n : null; };
-UI.vfind = { add:[], buy:[], get:[] };
+UI.vfind = { add:[], buy:[], get:[], check:[] }; UI.pcV = {};
 
 function initVendorState() {
   S.stock ||= {}; S.ledger ||= [];
-  S.vendor = { basket:[], buy:[], give:[], get:[], langAdj:{}, defLang:'en', vtab:'stock', buyPct:60, buyRound:0.1, method:'cash', buyMethod:'cash', total:null, range:'today', sort:'name', adding:false, ...S.vendor };
+  S.vendor = { basket:[], buy:[], give:[], get:[], langAdj:{}, defLang:'en', vtab:'stock', buyPct:60, buyRound:0.1, method:'cash', buyMethod:'cash', total:null, range:'today', sort:'name', adding:false, staleDays:90, drift:15, ...S.vendor };
 }
 function vendorCardIds() {
   const ids = new Set(Object.values(S.stock || {}).map(l => l.cardId));
@@ -70,6 +70,69 @@ function lotLabel(l, withCond = true) {
 }
 const cardSub = id => { const c = S.cards[id] || {}; return `${esc(c.set_name || '')} · ${esc(c.number || '')}`; };
 const thumb = id => { const u = safeUrl(S.cards[id]?.img_s); return u ? `<img src="${esc(u)}" alt="" loading="lazy">` : '<span class="ph"></span>'; };
+
+/* Card search for the vendor screens: printed code, or name across the Pokémon TCG API plus TCGdex for newer sets.
+   If the old API is down, TCGdex answers on its own. Throws only when both are unreachable. */
+async function vendorSearch(term) {
+  if (/^([A-Za-z]{2,5}|PR-[A-Za-z]{2,4})[\s-]*[A-Za-z]{0,4}\d{1,4}/.test(term)) return (await codeSearch(term)).results;
+  let pt = [], ptOk = true;
+  try { pt = await apiFetchAll(buildQuery('name', term), null, null, 40); } catch { ptOk = false; }
+  let td = [];
+  try { td = (await tdSearch('name', term, 'en', null, null, b => !ptOk || !ptHasTdSet(tdBriefSet(b)))).cards; } catch (e) { if (!ptOk) throw e; }
+  const seen = new Set(pt.map(c => c.id));
+  return [...pt, ...td.filter(c => !seen.has(c.id))].sort(SORTS.release).reverse();   // newest first: what's on the table is usually recent
+}
+
+/* ---------- price check: one screen for "what's this worth / what would you pay" ---------- */
+function checkHtml() {
+  const V = S.vendor, res = UI.vfind.check || [], dl = V.defLang && LANGS[V.defLang] ? V.defLang : 'en';
+  const card = c => { const id = c.id, cc = S.cards[id] || c, vs = variantsOf(cc), v = vs.includes(UI.pcV[id]) ? UI.pcV[id] : vs[0];
+    const m = mktFor(id, v, dl), sell = rulePrice({ id, v, lang:dl }), offer = buyOffer(id, v, dl), lots = Object.values(S.stock).filter(l => l.cardId === id && l.v === v), have = lots.reduce((n, l) => n + l.q, 0);
+    const img = safeUrl(cc.img_l || cc.img_s);
+    return `<article class="pc-card">
+      ${img ? `<img src="${esc(img)}" alt="${esc(cc.name)}" loading="lazy">` : '<span class="ph"></span>'}
+      <div class="pc-body"><h3>${esc(cc.name)}</h3><p class="small muted">${esc(cc.set_name)} · ${esc(cc.number)}${cc.rarity ? ' · ' + esc(cc.rarity) : ''}${dl !== 'en' && !cardLang(id) ? ` · priced for ${esc(LANGS[dl])}` : ''}</p>
+        ${vs.length > 1 ? `<div class="pc-vs" role="group" aria-label="Printing">${vs.map(x => `<button type="button" class="chipbtn" data-vact="pcv" data-card="${esc(id)}" data-v="${x}" aria-pressed="${x === v}">${esc(VARIANTS[x])}</button>`).join('')}</div>` : ''}
+        <dl class="pc-nums"><div><dt>Market</dt><dd class="pwrap">${mktBadge(id, v)}${m != null ? GBP.format(m) : '—'}</dd></div><div><dt>You sell at</dt><dd>${sell != null ? GBP.format(sell) : '—'}</dd></div><div><dt>You'd pay</dt><dd>${offer != null ? GBP.format(offer) : '—'}</dd></div><div><dt>In stock</dt><dd>${have || '0'}</dd></div></dl>
+        <div class="pc-act">
+          <button class="btn primary" data-vact="pc-sell" data-card="${esc(id)}" data-v="${v}"${have ? '' : ' disabled'}>${ic('plus', 'sm')}Sell</button>
+          <button class="btn" data-vact="pc-buy" data-card="${esc(id)}" data-v="${v}">${ic('plus', 'sm')}Buy</button>
+          <button class="btn" data-vact="pc-get" data-card="${esc(id)}" data-v="${v}">${ic('plus', 'sm')}Trade in</button>
+          <a class="btn ghost" href="${esc(cardmarketUrl(cc))}" target="_blank" rel="noopener noreferrer">${cc.cmId ? 'Cardmarket' : 'Find'}</a></div></div></article>`; };
+  return `<section class="panel pc">
+    <h2 style="margin:0 0 4px">Price check</h2><p class="small muted" style="margin:0 0 10px">Type the code printed at the bottom of the card (e.g. <code>PBL 42</code>) or a name. Selling price uses your sticker rule; the offer uses your buying %.</p>
+    ${finderHtml('check', 'Printed code or card name')}
+    <div class="pc-list">${res.length ? res.map(card).join('') : ''}</div>
+    ${res.length ? `<div class="row" style="justify-content:flex-end"><button class="btn sm ghost" data-vact="pc-clear">Clear</button></div>` : ''}</section>`;
+}
+
+/* ---------- stock that needs attention: unsold for a while, prices moved, stickers out of date ---------- */
+const daysSince = d => d ? (Date.now() - Date.parse(d)) / 864e5 : Infinity;
+const moved = (a, b) => a > 0 && b > 0 && Math.abs(a - b) / b * 100 >= (+S.vendor.drift || 15);
+function stickerOutOfDate(l) { const ask = lotAsk(l); return l.printed > 0 && ask != null && moved(ask, l.printed); }
+function attentionLists() {
+  const V = S.vendor, lots = Object.values(S.stock);
+  return { stale:lots.filter(l => daysSince(l.lastSold || l.added) >= (+V.staleDays || 90)),
+    drift:lots.filter(l => l.price > 0 && moved(l.price, rulePrice({ id:l.cardId, v:l.v, lang:langOf(l) }))),
+    sticker:lots.filter(stickerOutOfDate) };
+}
+function attentionHtml() {
+  const V = S.vendor, A = attentionLists(), n = A.stale.length + A.drift.length + A.sticker.length;
+  if (!Object.keys(S.stock).length) return '';
+  const row = (l, extra) => `<li><button class="t" data-vact="lot" data-lot="${l.id}"><b>${lotLabel(l)}</b><span class="small muted">${cardSub(l.cardId)} · ×${l.q}</span></button><span class="small">${extra}</span></li>`;
+  return `<details class="attn"${V.attnOpen ? ' open' : ''}><summary><b>Needs attention</b> ${n ? `<span class="badge-n">${n}</span>` : '<span class="muted small">— all good</span>'}
+      <span class="small muted">${A.stale.length} unsold ${V.staleDays}+ days · ${A.drift.length} price${A.drift.length === 1 ? '' : 's'} moved · ${A.sticker.length} sticker${A.sticker.length === 1 ? '' : 's'} out of date</span></summary>
+    <div class="row attn-cfg"><label class="small">Unsold after <input class="inp sm" data-vin="staleDays" inputmode="numeric" value="${V.staleDays}" style="width:70px"> days</label>
+      <label class="small">Price moved by <input class="inp sm" data-vin="drift" inputmode="numeric" value="${V.drift}" style="width:60px">%</label></div>
+    ${A.drift.length ? `<h4>Your fixed price is ${V.drift}%+ away from your rule</h4><ul class="attn-list">${A.drift.slice(0, 100).map(l => { const rp = rulePrice({ id:l.cardId, v:l.v, lang:langOf(l) });
+      return row(l, `${GBP.format(l.price)} → rule ${GBP.format(rp)} <button class="btn sm" data-vact="follow-rule" data-lot="${l.id}">Use rule</button>`); }).join('')}</ul>
+      <button class="btn sm" data-vact="follow-rule-all">Put all ${A.drift.length} on the rule</button>` : ''}
+    ${A.stale.length ? `<h4>Not sold in ${V.staleDays}+ days</h4><ul class="attn-list">${A.stale.slice(0, 100).map(l => row(l, `${lotAsk(l) != null ? GBP.format(lotAsk(l)) : '—'} · ${Math.floor(daysSince(l.lastSold || l.added))} days <button class="btn sm" data-vact="markdown" data-lot="${l.id}">−10%</button>`)).join('')}</ul>
+      <button class="btn sm" data-vact="markdown-all">Mark all ${A.stale.length} down 10%</button>` : ''}
+    ${A.sticker.length ? `<h4>Sticker price no longer matches</h4><ul class="attn-list">${A.sticker.slice(0, 100).map(l => row(l, `sticker ${GBP.format(l.printed)} → now ${GBP.format(lotAsk(l))}`)).join('')}</ul>
+      <button class="btn sm primary" data-act="labels" data-src="changed">${ic('sticker', 'sm')}Reprint these ${A.sticker.length}</button>` : ''}
+    ${n ? '' : '<p class="small muted" style="margin:6px 0 0">Nothing to do. Stock is checked against your sticker rule and the last price you printed.</p>'}</details>`;
+}
 
 /* ---------- prices: online first, fall back to what's saved ---------- */
 async function freshen(ids) {
@@ -128,7 +191,7 @@ function vendorHtml() {
   const cost = lots.reduce((n, l) => n + (l.cost || 0) * l.q, 0), ask = lots.reduce((n, l) => n + (lotAsk(l) || 0) * l.q, 0);
   const T = ledgerTotals(ledgerIn('today'));
   const tabs = Object.entries(VTABS).map(([k, n]) => `<button role="tab" data-vact="tab" data-tab="${k}" aria-selected="${V.vtab === k}">${n}${k === 'sell' && V.basket.length ? ` (${V.basket.reduce((a, b) => a + b.q, 0)})` : k === 'buy' && V.buy.length ? ` (${V.buy.length})` : ''}</button>`).join('');
-  const body = { stock:stockHtml, sell:sellHtml, buy:buyHtml, trade:vtradeHtml, ledger:ledgerHtml }[V.vtab] || stockHtml;
+  const body = { check:checkHtml, stock:stockHtml, sell:sellHtml, buy:buyHtml, trade:vtradeHtml, ledger:ledgerHtml }[V.vtab] || stockHtml;
   return `<div class="ov">
     <div class="stats">
       <div class="stat hero"><div class="ring" style="--p:0" data-label="${copies}"></div><span class="k">Stock for sale</span><span class="v">${lots.length} card${lots.length === 1 ? '' : 's'}</span><span class="s">${copies} cop${copies === 1 ? 'y' : 'ies'} · asking ${GBP.format(ask)}</span></div>
@@ -141,7 +204,7 @@ function vendorHtml() {
     ${body()}</div>`;
 }
 function finderHtml(ctx, placeholder) {
-  const res = UI.vfind[ctx] || [];
+  const res = ctx === 'check' ? [] : UI.vfind[ctx] || [];
   return `<form class="row v-find" data-find="${ctx}" style="flex-wrap:nowrap"><div class="search" style="flex:1"><svg class="i"><use href="#i-search"/></svg><input class="inp" name="q" placeholder="${esc(placeholder)}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="${esc(placeholder)}"></div><button class="btn">Find</button></form>
     ${res.length ? `<div class="picker">${res.map(c => `<button class="titem" style="text-align:left" data-vact="pick" data-ctx="${ctx}" data-card="${esc(c.id)}">${thumb(c.id)}<span class="t"><b>${esc(c.name)}</b><span>${esc(c.set_name)} · ${esc(c.number)}${c.rarity ? ' · ' + esc(c.rarity) : ''}</span></span><span class="price small">${priceHtml(priceOf(c))}</span>${ic('plus')}</button>`).join('')}</div>` : ''}`;
 }
@@ -176,6 +239,7 @@ function stockHtml() {
       </div></div>
     ${V.adding ? `<div style="margin-top:12px;padding:12px;border:1px dashed var(--line-2);border-radius:var(--r)"><b class="small">Add cards to stock</b> <span class="small muted">— search by name or printed code, then set quantity, condition and cost.</span><div style="margin-top:8px">${finderHtml('add', 'Card name or code, e.g. PBL 42')}</div></div>` : ''}
     ${langPanelHtml()}
+    ${attentionHtml()}
     <div class="row" style="margin-top:12px;flex-wrap:nowrap"><div style="flex:1">${stockFilterHtml('stock')}</div>
       <select class="inp" data-vin="sort" style="width:auto" aria-label="Sort stock"><option value="name"${V.sort === 'name' ? ' selected' : ''}>Name</option><option value="value"${V.sort === 'value' ? ' selected' : ''}>Price ↓</option><option value="new"${V.sort === 'new' ? ' selected' : ''}>Newest</option></select></div>
     <div class="tlist" id="v-list-stock">${lotRows('stock', filteredLots('stock'))}</div></section>`;
@@ -323,6 +387,21 @@ async function vendorAction(t, e) {
     case 'trade': completeTrade(); break;
     case 'void': if (await confirmDlg('Void this entry?', 'It stays in the ledger, crossed out and excluded from totals, and the stock changes it made are reversed.', 'Void')) voidTxn(t.dataset.id); break;
     case 'move-spares': moveSpares(); break;
+    case 'pcv': UI.pcV[t.dataset.card] = t.dataset.v; renderVendor(); break;
+    case 'pc-clear': UI.vfind.check = []; renderVendor(); document.querySelector('form[data-find="check"] input')?.focus(); break;
+    case 'pc-sell': { const lot = Object.values(S.stock).filter(l => l.cardId === t.dataset.card && l.v === t.dataset.v).sort((x, y) => (lotAsk(y) || 0) - (lotAsk(x) || 0))[0];
+      if (lot) vendorAction({ dataset:{ vact:'basket-add', lot:lot.id } }); break; }
+    case 'pc-buy': case 'pc-get': {
+      const id = t.dataset.card, vv = t.dataset.v, dl = V.defLang && LANGS[V.defLang] ? V.defLang : 'en', list = a === 'pc-buy' ? V.buy : V.get;
+      const ex = list.find(b => b.cardId === id && b.v === vv && langOf(b) === dl);
+      if (ex) ex.q++; else list.push(a === 'pc-buy' ? { cardId:id, v:vv, c:'NM', lang:dl, q:1, unit:null } : { cardId:id, v:vv, c:'NM', lang:dl, q:1 });
+      vSave(false); toast(a === 'pc-buy' ? `Added to purchase (${V.buy.reduce((n, b) => n + b.q, 0)})` : `Added to trade-in (${V.get.reduce((n, b) => n + b.q, 0)})`, 'success',
+        { label:a === 'pc-buy' ? 'Go to Buy' : 'Go to Trade', fn:() => { V.vtab = a === 'pc-buy' ? 'buy' : 'trade'; vSave(); } }); break; }
+    case 'follow-rule': { const l = S.stock[t.dataset.lot]; if (l) { const snap = snapshot(); l.price = null; vSave(); undoable('Now following your sticker rule', snap); } break; }
+    case 'follow-rule-all': { const snap = snapshot(), L2 = attentionLists().drift; L2.forEach(l => { l.price = null; }); vSave(); undoable(`${L2.length} lot(s) now follow your sticker rule`, snap); break; }
+    case 'markdown': case 'markdown-all': { const snap = snapshot(), L2 = a === 'markdown' ? [S.stock[t.dataset.lot]].filter(Boolean) : attentionLists().stale;
+      L2.forEach(l => { const p = lotAsk(l); if (p > 0) { l.price = round2(Math.max(0.01, p * 0.9)); l.lastSold = today(); } }); vSave();   // marking down restarts the clock
+      undoable(`Marked ${L2.length} lot(s) down 10%`, snap); break; }
     case 'stock-csv': download(`PokeBinder_stock_${today()}.csv`, stockCsv(), 'text/csv;charset=utf-8'); break;
     case 'ledger-csv': download(`PokeBinder_ledger_${V.range}_${today()}.csv`, ledgerCsv(ledgerIn(V.range)), 'text/csv;charset=utf-8'); break;
   }
@@ -342,7 +421,7 @@ function completeSale() {
   const snap = snapshot();
   const scale = t.sub > 0 ? t.total / t.sub : 1;   // a bundle price is spread across the lines so per-card profit stays meaningful
   const lines = [];
-  for (const b of V.basket) { const l = S.stock[b.lotId]; if (!l) continue; const n = takeFromStock(l.id, b.q); if (!n) continue;
+  for (const b of V.basket) { const l = S.stock[b.lotId]; if (!l) continue; l.lastSold = today(); const n = takeFromStock(l.id, b.q); if (!n) continue;
     lines.push({ cardId:l.cardId, v:l.v, c:l.c, lang:langOf(l), q:n, unit:round2((b.unit || 0) * scale), cost:l.cost ?? null }); }
   if (!lines.length) { toast('Those cards are no longer in stock', 'error'); return; }
   record('sale', V.method, lines, t.total); V.basket = []; V.total = null; vSave();
@@ -431,6 +510,8 @@ document.addEventListener('change', e => {
   const V = S.vendor, i = +el.dataset.i, k = el.dataset.vin;
   if (k === 'sort' && ['name', 'value', 'new'].includes(el.value)) V.sort = el.value;
   else if (k === 'range' && ['today', '7d', 'month', 'all'].includes(el.value)) V.range = el.value;
+  else if (k === 'staleDays') { const n = Math.floor(vNum(el.value)); V.staleDays = n >= 7 && n <= 3650 ? n : 90; V.attnOpen = true; }
+  else if (k === 'drift') { const n = vNum(el.value); V.drift = n >= 1 && n <= 500 ? n : 15; V.attnOpen = true; }
   else if (k === 'bunit') { const n = vNum(el.value); if (V.basket[i]) V.basket[i].unit = n > 0 && n < 1e5 ? round2(n) : null; V.total = null; }
   else if (k === 'total') { const n = vNum(el.value); V.total = n >= 0 && n < 1e6 && el.value.trim() !== '' ? round2(n) : null; }
   else if (k === 'buyPct') { const n = vNum(el.value); V.buyPct = n > 0 && n <= 200 ? n : 60; }
@@ -445,6 +526,7 @@ document.addEventListener('change', e => {
   else return;
   vSave();
 });
+document.addEventListener('toggle', e => { if (e.target.classList?.contains('attn')) S.vendor.attnOpen = e.target.open; }, true);
 let vfT;
 document.addEventListener('input', e => {
   const ctx = e.target.dataset?.vfilter; if (!ctx) return;
@@ -462,15 +544,14 @@ document.addEventListener('submit', async e => {
   const term = e.target.q.value.trim(); if (!term) return;
   const btn = e.target.querySelector('button'); btn.disabled = true;
   try {
-    let res;
-    if (/^([A-Za-z]{2,5}|PR-[A-Za-z]{2,4})[\s-]*[A-Za-z]{0,4}\d{1,4}/.test(term)) res = (await codeSearch(term)).results;
-    else res = await apiFetchAll(buildQuery('name', term), null, null, 40);
-    UI.vfind[ctx] = res.slice(0, 40);
-    if (!res.length) toast('No cards found', 'warn');
+    UI.vfind[ctx] = (await vendorSearch(term)).slice(0, ctx === 'check' ? 12 : 40);
+    if (!UI.vfind[ctx].length) toast('No cards found', 'warn');
   } catch {
     const t = term.toLowerCase(); UI.vfind[ctx] = Object.values(S.cards).filter(c => c.name.toLowerCase().includes(t)).slice(0, 40);
     toast(`Offline — showing ${UI.vfind[ctx].length} card(s) saved on this device`, 'warn');
   } finally { btn.disabled = false; }
+  if (ctx === 'check') { UI.vfind.check.forEach(mergeCard); UI.vfind.check = UI.vfind.check.map(c => S.cards[c.id] || c);
+    renderVendor(); freshen(UI.vfind.check.map(c => c.id)).then(ok => { if (ok && S.vendor.vtab === 'check') renderVendor(); }); }
   renderVendor();
   document.querySelector(`form[data-find="${ctx}"] input`)?.focus();
 });
@@ -506,6 +587,7 @@ function sanitizeVendor(st, cards) {
     if (!/^l_[a-z0-9]{1,30}$/.test(k) || !l || l.id !== k || !cards[l.cardId]) continue;
     const q = Math.floor(numOr(l.q, 0)); if (q < 1 || q > 9999) continue;
     stock[k] = { id:k, cardId:l.cardId, v:VARIANTS[l.v] && l.v !== 'any' ? l.v : 'normal', c:CONDITIONS.includes(l.c) ? l.c : '', lang:LANGS[l.lang] ? l.lang : 'en', q, cost:num(l.cost, 0, 1e5), price:num(l.price, 0.01, 1e5),
+      ...(num(l.printed, 0.01, 1e5) ? { printed:num(l.printed, 0.01, 1e5) } : {}), ...(/^\d{4}-\d{2}-\d{2}$/.test(l.printedAt) ? { printedAt:l.printedAt } : {}), ...(/^\d{4}-\d{2}-\d{2}$/.test(l.lastSold) ? { lastSold:l.lastSold } : {}),
       added:/^\d{4}-\d{2}-\d{2}$/.test(l.added) ? l.added : today(), src:['spares', 'buy', 'manual', 'trade', 'void'].includes(l.src) ? l.src : 'manual' };
   }
   for (const t of (Array.isArray(st?.ledger) ? st.ledger : []).slice(-20000)) {

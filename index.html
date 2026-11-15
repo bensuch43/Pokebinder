@@ -221,6 +221,30 @@ small{font-size:12px}
 @media (max-width:560px){ .deal-links{padding-left:10px} .deal-main{grid-template-columns:40px minmax(0,1fr)} .deal-main .price{grid-column:2} }
 .printings{margin-top:4px;padding:10px;border:1px dashed var(--line-2);border-radius:var(--r)} .printings ul{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:4px}
 .printings li{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap} .printings li.off b{text-decoration:line-through;color:var(--text-3)}
+.since{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;align-items:center;margin-top:14px;border-left:3px solid var(--accent)} .since-act{display:flex;gap:8px;flex-wrap:wrap}
+.watch-line{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;padding:4px 2px}
+.complete summary{cursor:pointer;min-height:44px;display:flex;align-items:center} .complete[open] summary{margin-bottom:8px}
+.complete-cfg{gap:8px 14px;align-items:center;margin-bottom:8px} .complete-cfg label{display:inline-flex;align-items:center;gap:6px}
+.buylist{margin:8px 0 0;padding-left:28px;display:grid;gap:2px} .buylist li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:4px 6px;border-radius:8px}
+.buylist li.fit{background:var(--ok-soft)} .buylist .t{all:unset;cursor:pointer;display:grid;min-height:44px;align-content:center} .buylist .t:focus-visible{outline:2px solid var(--accent)}
+.buylist a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px;padding:0 4px}
+.pc .v-find .inp{font-size:18px;min-height:52px}
+.pc-list{display:grid;gap:12px;margin-top:12px}
+.pc-card{display:grid;grid-template-columns:minmax(0,180px) minmax(0,1fr);gap:16px;padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.pc-card img,.pc-card .ph{width:100%;aspect-ratio:63/88;object-fit:cover;border-radius:10px;background:var(--surface-2);display:block}
+.pc-body h3{margin:0;font-size:22px} .pc-body p{margin:2px 0 8px}
+.pc-vs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.chipbtn{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface-2);color:var(--text);font:inherit;font-size:14px;cursor:pointer}
+.chipbtn[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+.pc-nums{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 10px} .pc-nums div{background:var(--surface-2);border-radius:10px;padding:8px 10px}
+.pc-nums dt{font-size:12px;color:var(--text-3);font-weight:700;text-transform:uppercase;letter-spacing:.04em} .pc-nums dd{margin:2px 0 0;font-size:22px;font-weight:750;font-variant-numeric:tabular-nums}
+.pc-act{display:flex;flex-wrap:wrap;gap:8px} .pc-act .btn{min-height:48px}
+@media (max-width:560px){ .pc-card{grid-template-columns:96px minmax(0,1fr);gap:10px} .pc-body h3{font-size:18px} .pc-nums{grid-template-columns:repeat(2,minmax(0,1fr))} .pc-nums dd{font-size:19px} .pc-act{grid-column:1/-1} }
+.attn{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface-2)} .attn summary{cursor:pointer;min-height:44px;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.attn h4{margin:12px 0 4px;font-size:14px} .attn-cfg{gap:8px 16px;margin:6px 0} .attn-cfg label{display:inline-flex;align-items:center;gap:6px}
+.attn-list{list-style:none;margin:0 0 6px;padding:0;display:grid;gap:4px} .attn-list li{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.attn-list .t{all:unset;cursor:pointer;display:grid;min-height:44px;align-content:center} .attn-list .t:focus-visible{outline:2px solid var(--accent)}
+.badge-n{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:var(--warn);color:#1c1505;font-size:12px;font-weight:800}
 .match-banner{margin-bottom:12px;border-left:3px solid var(--accent)} .match-banner summary{cursor:pointer}
 .plegend{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:5px} .plegend li{display:flex;align-items:baseline;gap:0} .plegend b{color:var(--text);margin-right:4px}
 .qual{padding:8px 10px;border-radius:8px;background:var(--surface)} .qual.good{border-left:3px solid var(--ok)} .qual.fallback{border-left:3px solid var(--warn)} .qual.stale{border-left:3px solid var(--danger)}
@@ -583,6 +607,9 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
         </select></div>
     </div>
     <label class="chk"><input type="checkbox" id="col-variants"><span>Master set: give each variant its own pocket<small class="muted">Printings are combined from TCGdex, TCGplayer and Cardmarket listings, and the Pokémon TCG API. Normal, reverse holo, holo and 1st edition prints each get a pocket and count separately towards completion.</small></span></label>
+    <div><label class="f" for="col-watch">Watch for new cards by artist (optional)</label>
+      <input id="col-watch" class="inp" maxlength="80" placeholder="e.g. Yuka Morii" autocomplete="off" autocapitalize="words" spellcheck="false" aria-describedby="col-watch-h">
+      <small class="muted" id="col-watch-h">Once a day, when you open the app, it checks TCGdex and tells you about cards by this artist that weren't there before.</small></div>
     <label class="chk"><input type="checkbox" id="col-setbreaks"><span>Start each set on a new page<small class="muted">Pads the last page of a set with empty pockets so sets never share a page.</small></span></label>
     <label class="chk"><input type="checkbox" id="col-startright" checked><span>Page 1 is on the right (ring binders)<small class="muted">Untick if your binder has a fixed page on the inside front cover. Only affects how spreads are shown.</small></span></label>
   </div>
@@ -792,7 +819,7 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
     <fieldset><legend>Which cards</legend>
       <div class="grid2">
         <div><label class="f" for="lb-src">Cards</label>
-          <select id="lb-src" class="inp"><option value="stock">My stock for sale</option><option value="spare">Spares in the current collection</option><option value="give">"You give" in the trade screen</option><option value="filter">Cards in the current view &amp; filters</option></select></div>
+          <select id="lb-src" class="inp"><option value="stock">My stock for sale</option><option value="spare">Spares in the current collection</option><option value="changed">Stock whose price changed since its sticker</option><option value="give">"You give" in the trade screen</option><option value="filter">Cards in the current view &amp; filters</option></select></div>
         <div><label class="f" for="lb-copies">Stickers per card</label>
           <select id="lb-copies" class="inp"><option value="copy">One per copy</option><option value="one">One per card</option></select></div>
       </div>

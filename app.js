@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.4.0',
+  version: '3.5.0',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -656,7 +656,7 @@ function listHtml(col) {
 
 function overviewHtml(col) {
   const t = ownedTotals(col);
-  return `<div class="ov">${dealsHtml(col)}
+  return `<div class="ov">${watchHtml(col)}${dealsHtml(col)}${completeHtml(col)}
     <section class="panel"><div class="row" style="justify-content:space-between"><div><h2>Collection value</h2>
       <p class="muted small" style="margin:0">Recorded once a day from the latest prices you've fetched${col.history?.length ? ` · since ${esc(col.history[0].d)}` : ''}.</p></div>
       <div class="legend"><span>Owned value</span>${t.withPaid ? '<span class="paid">Paid</span>' : ''}</div></div>
@@ -669,7 +669,7 @@ function overviewHtml(col) {
    Uses Cardmarket's price guide via TCGdex. These are market-wide averages, not individual listings:
    they show good moments to buy, not specific underpriced copies.
    ========================================================================== */
-const DEAL_DEFAULTS = { scope:'needed', dip:10, min:1, jp:true };
+const DEAL_DEFAULTS = { scope:'needed', dip:10, min:1, jp:true, auto:true };
 const dealCfg = col => ({ ...DEAL_DEFAULTS, ...(col.deals || {}) });
 /* Cardmarket figures for one printing, from TCGdex (reverse holos use the "-holo" columns). */
 function tdFigs(c, v) {
@@ -713,13 +713,14 @@ function dealEntries(col, cfg) {
   return UI.layout.cards.filter(e => (cfg.scope === 'all' || !col.owned[e.id]) && !S.cards[e.cardId]?.custom)
     .filter(e => { const k = `${e.cardId}|${e.variant || ''}`; if (seen.has(k)) return false; seen.add(k); return true; });
 }
-async function scanDeals() {
-  const col = active(); if (!col) return;
+async function scanDeals(opts = {}) {
+  const quiet = !!opts.quiet, col = active(); if (!col || UI.dealsBusy) return null;
   const cfg = dealCfg(col), entries = dealEntries(col, cfg);
-  if (!entries.length) { toast(cfg.scope === 'needed' ? 'Nothing needed in this collection — switch the scan to all cards' : 'No cards to scan', 'warn'); return; }
-  UI.dealsBusy = true; renderView();
+  if (!entries.length) { if (!quiet) toast(cfg.scope === 'needed' ? 'Nothing needed in this collection — switch the scan to all cards' : 'No cards to scan', 'warn'); return null; }
+  UI.dealsBusy = true; if (!quiet) renderView();
   const ac = new AbortController(); UI.dealsAbort = ac;
   const prog = t => { const el = $('#deal-prog'); if (el) el.textContent = t; };
+  let summary = null;
   try {
     await loadFx();
     const ids = [...new Set(entries.map(e => e.cardId))];
@@ -764,9 +765,11 @@ async function scanDeals() {
     const saved = rows.slice(0, 200).map(x => ({ eid:x.e.id, cardId:x.c.id, v:x.e.variant || '', flags:x.flags.map(f => ({ k:f.k, t:f.t })), score:Math.round(x.score * 10) / 10, jp:x.jp?.c.id || null }));
     saved.forEach(x => { if (prevKeys && !prevKeys.has(dealKey(x))) x.isNew = true; });
     S.dealsSaved[col.id] = { at:Date.now(), prevAt:prev?.at || null, scanned:entries.length, cfg:{ ...cfg }, rows:saved };
-    if (tdFailed) toast(`${tdFailed} card(s) couldn't be checked (TCGdex busy or offline) — scan again in a minute`, 'warn');
-  } catch (e) { if (e.name !== 'AbortError') toast(`Deal scan stopped: ${e.message}`, 'error'); }
-  finally { UI.dealsBusy = false; UI.dealsAbort = null; save(); render(); recordSnapshot(col); }   // render() rebuilds the layout so the tiles see new prices
+    summary = { fresh:saved.filter(x => x.isNew).length, targets:saved.filter(x => x.isNew && x.flags.some(f => f.k === 'target')).length };
+    if (tdFailed && !quiet) toast(`${tdFailed} card(s) couldn't be checked (TCGdex busy or offline) — scan again in a minute`, 'warn');
+  } catch (e) { if (e.name !== 'AbortError' && !quiet) toast(`Deal scan stopped: ${e.message}`, 'error'); }
+  finally { UI.dealsBusy = false; UI.dealsAbort = null; save(); if (active() === col && !UI.share) render(); recordSnapshot(col); }   // render() rebuilds the layout so the tiles see new prices
+  return summary;
 }
 const dealKey = x => `${x.eid}|${x.flags.map(f => f.k).sort().join(',')}`;
 /* Saved rows → rows to draw, using today's card data and prices. */
@@ -804,6 +807,7 @@ function dealsHtml(col) {
       <label class="small">Flag drops of ${sel('dip', [[5, '5%+'], [10, '10%+'], [15, '15%+'], [20, '20%+'], [30, '30%+']])}</label>
       <label class="small">Ignore under ${sel('min', [[0, '£0'], [0.5, '£0.50'], [1, '£1'], [2, '£2'], [5, '£5'], [10, '£10']])}</label>
       <label class="chk small" style="margin:0"><input type="checkbox" data-deal="jp"${cfg.jp ? ' checked' : ''}><span>Compare Japanese prints</span></label>
+      <label class="chk small" style="margin:0"><input type="checkbox" data-deal="auto"${cfg.auto ? ' checked' : ''}><span>Re-check once a day when I open the app</span></label>
       ${UI.dealsBusy ? `<button class="btn sm" data-act="deals-stop">Stop</button>` : `<button class="btn sm primary" data-act="deals-scan">${ic('search', 'sm')}Scan ${n} card${n === 1 ? '' : 's'}</button>`}</div>
     ${UI.dealsBusy ? `<p class="small muted" id="deal-prog" role="status">Starting…</p>` : ''}
     ${d && !UI.dealsBusy ? (d.rows.length ? `<p class="small muted" style="margin:0" role="status">${d.rows.length} of ${d.scanned} card${d.scanned === 1 ? '' : 's'} flagged · scanned ${when(d.at)}${d.prevAt ? ` · <b>${d.rows.filter(x => x.isNew).length} new</b> since ${when(d.prevAt)}` : ''}. Targets first, then biggest drop.</p><ul class="deal-list">${d.rows.slice(0, 100).map(row).join('')}</ul>`
@@ -907,6 +911,11 @@ function undoable(msg, snap) {
 
 /* ---------- collection dialog ---------- */
 let colMode = 'new';
+function setWatch(col, artist) {
+  artist = String(artist || '').trim().slice(0, 80);
+  if (!artist) { delete col.watch; return; }
+  if (col.watch?.artist?.toLowerCase() !== artist.toLowerCase()) col.watch = { artist, seen:[], at:0 };   // new artist: start a fresh baseline
+}
 function openColDialog(mode) {
   colMode = mode; const col = active();
   const isEdit = mode === 'edit' && col;
@@ -918,6 +927,7 @@ function openColDialog(mode) {
   $('#col-setbreaks').checked = isEdit ? col.setBreaks : false;
   $('#col-variants').checked = isEdit ? !!col.variantSlots : false;
   $('#col-startright').checked = isEdit ? col.startRight : true;
+  $('#col-watch').value = isEdit ? col.watch?.artist || '' : '';
   $('#col-delete').classList.toggle('hidden', !isEdit);
   $('#col-dup').classList.toggle('hidden', !isEdit);
   $('#dlg-col').showModal();
@@ -927,11 +937,11 @@ $('#form-col').addEventListener('submit', e => {
   const name = $('#col-name').value.trim(); if (!name) { e.preventDefault(); return; }
   const opts = { layout:$('#col-layout').value, sort:$('#col-sort').value, setBreaks:$('#col-setbreaks').checked, startRight:$('#col-startright').checked, variantSlots:$('#col-variants').checked };
   if (colMode === 'edit' && active()) {
-    const was = active().variantSlots; Object.assign(active(), opts, { name, updated:Date.now() }); toast('Collection updated', 'success');
+    const was = active().variantSlots; Object.assign(active(), opts, { name, updated:Date.now() }); setWatch(active(), $('#col-watch').value); toast('Collection updated', 'success');
     const unknown = active().cardIds.filter(id => S.cards[id] && !S.cards[id].custom && !S.cards[id].vEv).length;
     if (opts.variantSlots && !was && unknown) { toast(`Checking which printings exist for ${unknown} card${unknown === 1 ? '' : 's'}…`, 'info'); setTimeout(refreshPrices, 50); }
   }
-  else { const c = newCollection(uniqueName(name), opts); S.collections[c.id] = c; S.order.push(c.id); S.activeId = c.id; toast(`Created "${c.name}"`, 'success'); }
+  else { const c = newCollection(uniqueName(name), opts); setWatch(c, $('#col-watch').value); S.collections[c.id] = c; S.order.push(c.id); S.activeId = c.id; toast(`Created "${c.name}"`, 'success'); }
   save(); render();
 });
 $('#col-dup').addEventListener('click', () => {
@@ -1599,6 +1609,7 @@ $('#s-add').addEventListener('click', () => {
   let col;
   if ($('input[name=s-target]:checked').value === 'new') {
     col = newCollection(uniqueName($('#s-newname').value.trim() || 'New collection'));
+    if (UI.search.artist && tdLang($('#s-lang').value) === 'en') setWatch(col, UI.search.artist);   // follow the artist you searched for (change in collection settings)
     S.collections[col.id] = col; S.order.push(col.id); S.activeId = col.id;
   } else col = active();
   const have = new Set(col.cardIds); let n = 0;
@@ -1614,6 +1625,11 @@ $('#s-add').addEventListener('click', () => {
 });
 $('#dlg-add').addEventListener('close', () => UI.search.abort?.abort());
 
+document.addEventListener('change', e => {
+  const ck = e.target.closest?.('[data-complete]')?.dataset.complete; if (!ck) return;
+  UI.complete[ck] = e.target.value; UI.complete.open = true; renderView();
+});
+document.addEventListener('toggle', e => { if (e.target.classList?.contains('complete')) (UI.complete ||= { set:'all', budget:'' }).open = e.target.open; }, true);
 document.addEventListener('change', e => {
   const k = e.target.closest?.('[data-deal]')?.dataset.deal; if (!k) return;
   const col = active(); if (!col) return;
@@ -1633,6 +1649,72 @@ function pruneCaches(all = false) {
   if (!all) { Object.values(S.jpAlt || {}).forEach(v => v.ids.forEach(id => keep.add(id))); Object.values(S.dealsSaved || {}).forEach(d => d.rows.forEach(x => x.jp && keep.add(x.jp))); (S.gapCache?.ids || []).forEach(id => keep.add(id)); }
   for (const [id, c] of Object.entries(S.cards)) if (!keep.has(id) && (all || c.lang)) { delete S.cards[id]; out.cards++; }   // routine sweeps only drop orphaned Japanese candidates
   return out;
+}
+
+/* ---------- "since you last looked": a banner above the view ---------- */
+function showSince(html, actions = []) {
+  let el = $('#since'); if (!el) { el = document.createElement('div'); el.id = 'since'; el.className = 'since panel'; el.setAttribute('role', 'status'); $('#view').before(el); }
+  el.innerHTML = `<div class="since-msg">${html}</div><div class="since-act">${actions.map((x, i) => `<button type="button" class="btn sm${i ? '' : ' primary'}" data-since="${i}">${esc(x.label)}</button>`).join('')}<button type="button" class="btn sm ghost" data-since="x" aria-label="Dismiss">Dismiss</button></div>`;
+  el.classList.remove('hidden');
+  el.onclick = e => { const k = e.target.closest('[data-since]')?.dataset.since; if (k == null) return; el.classList.add('hidden'); if (k !== 'x') actions[+k]?.fn(); };
+}
+/* ---------- new-card watch: tells you when TCGdex lists new cards by the artist a collection follows ---------- */
+const briefInCol = (b, col) => { const set = tdBriefSet(b), pt = TCGDEX_SET_MAP[set] || S.tcgdexSetMap?.[set];
+  return col.cardIds.includes(b.id) || (pt && col.cardIds.includes(`${pt}-${String(b.localId).replace(/^0+(?=\d)/, '')}`)); };
+async function checkWatch(col, force = false) {
+  const w = col.watch; if (!w?.artist || (!force && Date.now() - (w.at || 0) < 20 * 36e5)) return null;
+  const list = ((await tdJson('en', `/cards?illustrator=${encodeURIComponent(w.artist)}`)) || []).filter(b => b?.id && !isPocketSet(tdBriefSet(b)));
+  const first = !w.seen?.length, seen = new Set(w.seen || []), fresh = list.filter(b => !seen.has(b.id));
+  w.seen = [...new Set([...(w.seen || []), ...list.map(b => b.id)])].slice(-5000); w.at = Date.now(); save();
+  return { first, fresh:first ? [] : fresh, missing:list.filter(b => !briefInCol(b, col)).length, total:list.length };
+}
+function reviewArtist(colId, artist) {
+  if (S.collections[colId]) { S.activeId = colId; render(); }
+  openAdd(); $('#s-lang').value = 'en'; $('#s-mode').value = 'artist'; $('#s-mode').dispatchEvent(new Event('change')); $('#s-term').value = artist;
+  UI.search.hideHave = true; $('#form-search').requestSubmit();
+}
+async function startupChecks() {
+  if (UI.share || navigator.onLine === false) return;
+  const notes = [], acts = [];
+  for (const id of S.order) {   // 1. followed artists (one request each, at most once a day)
+    const col = S.collections[id];
+    try { const r = await checkWatch(col); if (r?.fresh.length) { notes.push(`<b>${r.fresh.length} new ${esc(col.watch.artist)} card${r.fresh.length === 1 ? '' : 's'}</b> on TCGdex for “${esc(col.name)}”`); acts.push({ label:`Review ${col.watch.artist}`, fn:() => reviewArtist(id, col.watch.artist) }); } } catch { /* offline: try next time */ }
+  }
+  const col = active(), d = col && S.dealsSaved?.[col.id];   // 2. daily Deals re-check for the open collection, if you've scanned it before
+  if (col && d && dealCfg(col).auto && Date.now() - d.at > 20 * 36e5) {
+    const s = await scanDeals({ quiet:true });
+    if (s && (s.fresh || s.targets)) { notes.push(`${s.targets ? `<b>${s.targets} target${s.targets === 1 ? '' : 's'} hit</b> · ` : ''}<b>${s.fresh} new deal${s.fresh === 1 ? '' : 's'}</b> in “${esc(col.name)}”`); acts.push({ label:'View deals', fn:() => { UI.view = S.settings.view = 'sets'; save(); render(); } }); }
+  }
+  if (notes.length) showSince(`Since you last looked: ${notes.join(' · ')}`, acts.slice(0, 2));
+}
+
+/* ---------- cost to complete ---------- */
+function completeHtml(col) {
+  UI.complete ||= { set:'all', budget:'' };
+  const need = UI.layout.cards.filter(e => !col.owned[e.id]);
+  if (!need.length) return '';
+  const sets = new Map(); need.forEach(e => sets.set(e.set_id, e.set_name));
+  if (UI.complete.set !== 'all' && !sets.has(UI.complete.set)) UI.complete.set = 'all';
+  const rows = need.filter(e => UI.complete.set === 'all' || e.set_id === UI.complete.set).map(e => ({ e, pi:priceOf(S.cards[e.cardId] || e, e.variant || undefined) }));
+  const priced = rows.filter(x => x.pi?.gbp != null).sort((x, y) => x.pi.gbp - y.pi.gbp), unpriced = rows.length - priced.length;
+  const total = priced.reduce((n, x) => n + x.pi.gbp, 0), budget = parseFloat(String(UI.complete.budget).replace(/[£,\s]/g, ''));
+  let spent = 0, fit = 0; if (budget > 0) for (const x of priced) { if (spent + x.pi.gbp > budget) break; spent += x.pi.gbp; fit++; }
+  UI.completeList = priced;
+  return `<details class="panel complete"${UI.complete.open ? ' open' : ''}><summary><span><b>Cost to complete</b> · ≈ ${GBP.format(total)} for ${priced.length} card${priced.length === 1 ? '' : 's'}${unpriced ? ` <span class="muted">(+${unpriced} unpriced)</span>` : ''}</span></summary>
+    <div class="row complete-cfg">
+      <label class="small">Set <select class="inp sm" data-complete="set"><option value="all">All sets (${need.length})</option>${[...sets].map(([id, n]) => `<option value="${esc(id)}"${UI.complete.set === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+      <label class="small">Budget £ <input class="inp sm" data-complete="budget" inputmode="decimal" placeholder="e.g. 50" value="${esc(UI.complete.budget)}" style="width:96px"></label>
+      <button type="button" class="btn sm" data-act="copy-buylist"${priced.length ? '' : ' disabled'}>${ic('copy', 'sm')}Copy buy list</button></div>
+    ${budget > 0 ? `<p class="small" role="status" style="margin:0"><b>${GBP.format(budget)}</b> buys the cheapest <b>${fit} of ${priced.length}</b> (${GBP.format(spent)}). Those are highlighted.</p>` : `<p class="small muted" style="margin:0">Cheapest first, at your chosen price figure. Enter a budget to see how far it goes.</p>`}
+    <ol class="buylist">${priced.slice(0, 200).map((x, i) => { const c = S.cards[x.e.cardId] || x.e;
+      return `<li class="${budget > 0 && i < fit ? 'fit' : ''}"><button class="t" data-act="info" data-id="${esc(x.e.id)}"><b>${esc(dispName(x.e))}</b><span class="small muted">${esc(x.e.set_name)} · ${esc(x.e.number)}</span></button>
+        <span class="price">${priceHtml(x.pi)}</span><a class="small" href="${esc(cardmarketUrl(c))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open' : 'Find'}<span class="sr"> ${esc(c.name)} on Cardmarket</span></a></li>`; }).join('')}</ol>
+    ${priced.length > 200 ? `<p class="small muted">Showing the cheapest 200. Pick a set to narrow it down.</p>` : ''}</details>`;
+}
+function watchHtml(col) {
+  const w = col.watch; if (!w?.artist) return '';
+  return `<div class="watch-line small"><span>${ic('search', 'sm')} Watching for new <b>${esc(w.artist)}</b> cards${w.at ? ` · checked ${new Date(w.at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}` : ''}</span>
+    <span class="row"><button type="button" class="btn sm" data-act="watch-check">Check now</button><button type="button" class="btn sm ghost" data-act="watch-review">Review ${esc(w.artist)} cards</button></span></div>`;
 }
 
 /* ---------- custom cards → real TCGdex cards ---------- */
@@ -1885,7 +1967,9 @@ function sanitizeState(st) {
     }
     if (c.targets && typeof c.targets === 'object') { col.targets = {}; for (const [k, v] of Object.entries(c.targets)) if (cards[k] && !BAD_KEYS.has(k) && v > 0 && v < 1e6) col.targets[k] = Math.round(v * 100) / 100; }
     if (c.deals && typeof c.deals === 'object') col.deals = { scope:c.deals.scope === 'all' ? 'all' : 'needed', dip:[5, 10, 15, 20, 30].includes(c.deals.dip) ? c.deals.dip : 10,
-      min:[0, 0.5, 1, 2, 5, 10].includes(c.deals.min) ? c.deals.min : 1, jp:c.deals.jp !== false };
+      min:[0, 0.5, 1, 2, 5, 10].includes(c.deals.min) ? c.deals.min : 1, jp:c.deals.jp !== false, auto:c.deals.auto !== false };
+    if (c.watch && typeof c.watch === 'object' && str(c.watch.artist, 80)) col.watch = { artist:str(c.watch.artist, 80), at:numOr(c.watch.at, 0),
+      seen:(Array.isArray(c.watch.seen) ? c.watch.seen : []).filter(x => typeof x === 'string' && ID_RE.test(x)).slice(0, 5000) };
     col.history = (Array.isArray(c.history) ? c.history : []).filter(h => h && /^\d{4}-\d{2}-\d{2}$/.test(h.d)).slice(-730).map(h => ({ d:h.d, v:numOr(h.v, 0), n:numOr(h.n, 0), p:numOr(h.p, 0) }));
     collections[id] = col;
   }
@@ -2330,7 +2414,7 @@ const lblKey = it => it.lotId ? `lot:${it.lotId}` : `${it.id}|${it.v || ''}`;
 function labelSource(src) {
   const col = active(); if (!col && src !== 'stock' && src !== 'give') return [];
   const out = [];
-  if (src === 'stock') Object.values(S.stock).forEach(l => out.push({ id:l.cardId, v:l.v, n:l.q, lotId:l.id, lang:langOf(l) }));
+  if (src === 'stock' || src === 'changed') Object.values(S.stock).filter(l => src === 'stock' || stickerOutOfDate(l)).forEach(l => out.push({ id:l.cardId, v:l.v, n:l.q, lotId:l.id, lang:langOf(l) }));
   else if (src === 'give') S.vendor.give.forEach(t => out.push({ id:t.id, v:t.v, n:t.q }));
   else if (src === 'filter') UI.layout.cards.filter(e => matches(e, col)).forEach(e => out.push({ id:e.cardId, v:e.variant || primaryVariant(S.cards[e.cardId] || e, col), n:1 }));
   else for (const id of col.cardIds) { const c = S.cards[id]; if (!c) continue; const by = {};
@@ -2546,8 +2630,10 @@ $('#lb-logo').addEventListener('change', async e => {
   } catch { toast('Couldn’t read that image', 'error'); }
 });
 $('#lb-logo-rm').addEventListener('click', async () => { lblSet('logo', ''); await loadLogo(); syncLabelForm(); });
-$('#lb-go').addEventListener('click', () => L().fmt === 'sheet' ? printLabelSheet() : shareThermal(false));
-$('#lb-dl').addEventListener('click', () => shareThermal(true));
+/* Remember what each stock sticker says, so the app can tell you when the price has since moved. */
+function markPrinted() { const d = today(); for (const s of selectedStickers()) { const l = s.lotId && S.stock[s.lotId]; if (l && s.price != null) { l.printed = s.price; l.printedAt = d; } } save(); }
+$('#lb-go').addEventListener('click', () => { markPrinted(); L().fmt === 'sheet' ? printLabelSheet() : shareThermal(false); });
+$('#lb-dl').addEventListener('click', () => { markPrinted(); shareThermal(true); });
 window.addEventListener('afterprint', () => document.getElementById('lbl-page-style')?.remove());
 
 /* ==========================================================================
@@ -2585,6 +2671,17 @@ document.addEventListener('click', e => {
     case 'refresh-prices': refreshPrices(); break;
     case 'match-custom': matchCustom(); break;
     case 'deals-scan': scanDeals(); break;
+    case 'copy-buylist': {
+      const L2 = UI.completeList || [], b = parseFloat(String(UI.complete?.budget || '').replace(/[£,\s]/g, '')); let spent = 0;
+      const pick = b > 0 ? L2.filter(x => (spent + x.pi.gbp <= b) && (spent += x.pi.gbp, true)) : L2;
+      const text = pick.map(x => `1 ${dispName(x.e)} — ${x.e.set_name} ${x.e.number} — ${GBP.format(x.pi.gbp)}`).join('\n') + `\n\nTotal ≈ ${GBP.format(pick.reduce((n, x) => n + x.pi.gbp, 0))} (${pick.length} cards)`;
+      navigator.clipboard.writeText(text).then(() => toast(`Copied ${pick.length} card${pick.length === 1 ? '' : 's'}`, 'success'), () => prompt('Copy this list:', text)); break; }
+    case 'watch-check': { const col = active(); t.disabled = true;
+      checkWatch(col, true).then(r2 => { if (!r2) return; renderView();
+        toast(r2.first ? `Now watching. TCGdex lists ${r2.total} ${col.watch.artist} cards; ${r2.missing} aren't in this collection.` : r2.fresh.length ? `${r2.fresh.length} new card(s) since the last check` : `Nothing new from ${col.watch.artist}`, r2.fresh.length ? 'success' : 'info',
+          r2.fresh.length || (r2.first && r2.missing) ? { label:'Review', fn:() => reviewArtist(col.id, col.watch.artist) } : undefined); })
+        .catch(e => toast(`Couldn't check TCGdex (${e.message})`, 'warn')).finally(() => { t.disabled = false; }); break; }
+    case 'watch-review': reviewArtist(active().id, active().watch.artist); break;
     case 'deals-stop': UI.dealsAbort?.abort(); break;
     case 'deal-reject': {
       const en = t.dataset.en, jpId = t.dataset.jp, col = active(), d = S.dealsSaved?.[col.id]; S.jpReject ||= {};
@@ -2605,7 +2702,7 @@ document.addEventListener('click', e => {
       try { if (S.cards[id]?.price?.td) S.cards[id].price.td.fetched = ''; await tcgdexPrices([id]); if (!S.cards[id]?.price?.td && S.cards[id]?.src !== 'tcgdex') { const [c] = await apiFetchAll(`id:"${id}"`).catch(() => []); if (c) mergeCard(c); } save(); await loadFx(); openInfo(eid); renderProgress(); toast(S.cards[id]?.price ? 'Price updated' : 'Still no price for this card', S.cards[id]?.price ? 'success' : 'warn'); }
       catch (err) { toast('Refresh failed: ' + err.message, 'error'); } })(); break;
     case 'share-want': shareRows(rowsFor(active(), 'needed')); break;
-    case 'labels': openLabels(); break;
+    case 'labels': openLabels(t.dataset.src); break;
     case 'share-trade': shareStock(); break;
     case 'close-share': closeShare(); break;
     case 'copy-share': navigator.clipboard?.writeText(UI.shareText || '').then(() => toast('Copied to clipboard', 'success'), () => toast('Clipboard not available', 'error')); break;
@@ -2694,7 +2791,7 @@ async function boot() {
   if (location.hash.startsWith('#s=')) await openShare(location.hash.slice(3));
   else render();
   window.addEventListener('hashchange', () => { if (location.hash.startsWith('#s=')) openShare(location.hash.slice(3)); });
-  loadFx().then(() => { const col = active(); if (col && !UI.share) { recordSnapshot(col); } });   // non-blocking; prices render in EUR/USD until a rate is available
+  loadFx().then(() => { const col = active(); if (col && !UI.share) { recordSnapshot(col); } setTimeout(() => startupChecks().catch(() => {}), 1500); });   // non-blocking; prices render in EUR/USD until a rate is available
   // gentle backup nudge: >50 owned ticks and no backup in 30 days
   const ticks = S.order.reduce((n, id) => n + Object.keys(S.collections[id].owned).length, 0);
   if (ticks > 50 && (!S.settings.lastBackup || Date.now() - S.settings.lastBackup > 30 * 864e5))
