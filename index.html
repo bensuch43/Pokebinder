@@ -249,7 +249,9 @@ small{font-size:12px}
 .attn-list .t{all:unset;cursor:pointer;display:grid;min-height:44px;align-content:center} .attn-list .t:focus-visible{outline:2px solid var(--accent)}
 .badge-n{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:var(--warn);color:#1c1505;font-size:12px;font-weight:800}
 .cmt-steps{margin:0 0 10px;padding-left:20px;display:grid;gap:6px} .cmt-block{margin-top:12px} .cmt-block pre{white-space:pre-wrap;word-break:break-word;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px;margin:6px 0 0}
-.cmt-cards,.cmt-pick{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px} .cmt-cards li{display:grid;grid-template-columns:40px minmax(0,1fr);gap:10px;align-items:center}
+.cmt-cards,.cmt-pick{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px} .cmt-cards li{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:10px;align-items:center} .cmt-cards a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px} .cmt-routes{display:grid;gap:10px;margin-bottom:8px} .cmt-routes section{border:1px solid var(--line);border-radius:10px;padding:10px} .cmt-routes h4{margin:0 0 4px;font-size:14px}
+.cmt-cards li.done{opacity:.6} .cmt-cards li.done b::before{content:'✓ ';color:var(--ok-text)}
+.cmt-check summary{cursor:pointer;min-height:44px;display:flex;align-items:center}
 .cmt-cards li > span{display:grid} .cmt-cards img,.cmt-cards .ph{width:40px;height:56px;border-radius:4px;object-fit:cover;background:var(--surface-2);display:block}
 .match-banner{margin-bottom:12px;border-left:3px solid var(--accent)} .match-banner summary{cursor:pointer}
 .plegend{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:5px} .plegend li{display:flex;align-items:baseline;gap:0} .plegend b{color:var(--text);margin-right:4px}
@@ -890,9 +892,9 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
 </div></dialog>
 
 <dialog id="dlg-cmtest"><div class="dlg">
-  <div class="dlg-h"><h3>Cardmarket paste test</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <div class="dlg-h"><h3 id="cmt-title">Send to Cardmarket</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
   <div class="dlg-b" id="cmt-body"></div>
-  <div class="dlg-f"><button class="btn" data-close>Close</button><button class="btn primary" id="cmt-go">Prepare test</button></div>
+  <div class="dlg-f"><button class="btn" data-close>Close</button><button class="btn primary hidden" id="cmt-go">OK</button></div>
 </div></dialog>
 <dialog id="dlg-confirm"><form method="dialog" class="dlg">
   <div class="dlg-h"><h3 id="cf-title">Are you sure?</h3></div>

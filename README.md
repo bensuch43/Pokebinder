@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.6
+# PokéBinder Studio v3.7
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,17 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## What's new in v3.7: Send to Cardmarket
+
+Cost to complete has a **Send to Cardmarket** button. It sends the cards within your budget, or every card if no budget is set.
+
+Another website can't fill your Cardmarket basket, so the route is a Cardmarket **wants list** followed by its **Shopping Wizard**. In the Wizard, choose **Reduce Shipments** for fewer sellers, or **Reduce Price** for the lowest total. There are two ways to build the list:
+
+- **Exact versions (best for artwork lists):** "Your cards" lists each card with its set and number. **Open** goes to that exact card's Cardmarket page so you can add it to the wants list there. Opened rows are ticked so you keep your place. Cards without a direct product link open a search instead.
+- **Quick paste:** the list is formatted the way Cardmarket accepts it for Pokémon (`1x Name Ability Attack…`), split into blocks of 150 lines. Tested in v3.6.1: set codes and plain names are rejected. **Pasted lines aren't pinned to a set.** Cardmarket matches "this card, any expansion" and may show a Japanese print as the sample picture, so edit each entry to the right set before running the Wizard.
+
+Wants entries accept any language unless you set one, so the Wizard may pick French or German copies if they're cheapest. Set English or Japanese only if you prefer. Japanese picks from "Any language" are marked so you can set the Japanese expansion. The temporary paste-test tool from v3.6.1 has been removed.
 
 ## What's new in v3.6
 
