@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.8.0',
+  version: '3.8.1',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -1805,6 +1805,7 @@ function watchHtml(col) {
    codes and plain names are rejected. A line matches the card "in any version and expansion", so the steps ask you to
    check versions. At most 150 lines per paste. */
 const CM_BLOCK = 150;
+const cmBatch = () => { const n = +S.settings.cmBatch; return n >= 5 && n <= 150 ? n : 50; };
 /* Cardmarket's card names include things TCGdex leaves out: the level on Diamond & Pearl-era cards ("Larvitar LV.13")
    and "Delta Species" after δ ("Ekans δ Delta Species"). Found by testing a 62-card list. */
 const cmName = c => `${c.name}${c.level && !/\bLV\./i.test(c.name) ? ` LV.${c.level}` : ''}${/\sδ$/.test(c.name) ? ' Delta Species' : ''}`;
@@ -1846,7 +1847,13 @@ function renderCmSend() {
   const T = UI.cmSend, rows = T.rows, blocks = [];
   // the same card needed from several sets can't be told apart in a paste (no set field), so those go to "add individually"
   const paste = T.paste = rows.filter(r2 => r2.cards <= 1), solo = rows.filter(r2 => r2.cards > 1);
-  for (let i = 0; i < paste.length; i += CM_BLOCK) blocks.push(paste.slice(i, i + CM_BLOCK));
+  // Split into wants lists the Shopping Wizard will accept (Cardmarket has limited it to 50 cards per list; adjustable).
+  // Each part holds pasted lines plus the cards to add individually, counted by copies.
+  const lim = cmBatch(), parts = [];
+  let cur = null; const room = n => { if (!cur || cur.n + n > lim) { cur = { lines:[], solo:[], n:0 }; parts.push(cur); } };
+  for (const r2 of paste) { room(Math.min(r2.q, lim)); cur.lines.push(r2); cur.n += r2.q; }
+  for (const x of solo.flatMap(r2 => r2.items)) { room(1); cur.solo.push(x); cur.n += 1; }
+  T.parts = parts; parts.forEach(p => { for (let i = 0; i < p.lines.length; i += CM_BLOCK) blocks.push(p.lines.slice(i, i + CM_BLOCK)); });
   const total = rows.reduce((n, r2) => n + r2.items.reduce((m, x) => m + (x.gbp || 0), 0), 0), missing = rows.filter(r2 => r2.missing).length;
   $('#cmt-body').innerHTML = `
     <p class="small" style="margin:0 0 8px">${T.fitOnly ? 'The cards within your budget' : 'Every card in the list'}: <b>${rows.reduce((n, r2) => n + r2.q, 0)} card${rows.length === 1 ? '' : 's'}</b>, ≈ ${GBP.format(total)} at your prices${T.skipped ? ` · ${T.skipped} custom card(s) left out` : ''}.</p>
@@ -1856,18 +1863,22 @@ function renderCmSend() {
           <li>Work down <b>“Your cards”</b> below: <b>Open</b> takes you to that exact card's page. Add it to your new wants list there. Opened rows are ticked so you can keep your place.</li>
           <li>Then run the <b>Shopping Wizard</b> on the list (step 4 below).</li></ol></section>
       <section><h4>Quick paste <span class="muted small">(any version)</span></h4>
-        <ol class="cmt-steps small"><li>Create a new wants list, paste ${blocks.length > 1 ? 'each block in turn' : 'the block below'} and press the green <b>Add</b> button.</li>
+        <ol class="cmt-steps small"><li>Create a new wants list${parts.length > 1 ? ' for each part below' : ''}, paste its block and press the green <b>Add</b> button. Add the “individually” cards to the same list.</li>
           <li><b>Pasted lines aren't pinned to a set.</b> Cardmarket matches “this card, any expansion”, shows a sample picture (often a Japanese print) and the Wizard may buy any version. Edit each entry to the set and number below, or use Exact versions instead.</li></ol></section>
     </div>
     <ol class="cmt-steps small" start="4"><li><b>Shopping Wizard:</b> choose <b>Reduce Shipments</b> for fewer sellers (or Reduce Price for the lowest total). <b>Languages:</b> entries allow any language unless you set one, so you may get French or German copies; set English or Japanese only if you prefer. Check shipping in your cart before paying.</li></ol>
     <a class="btn sm" href="https://www.cardmarket.com/en/Pokemon/Wants" target="_blank" rel="noopener noreferrer">Open Cardmarket Wants</a>
     ${missing ? `<p class="small" style="margin:10px 0 0"><b>${missing} Pokémon line${missing === 1 ? '' : 's'} have no attack names</b> (TCGdex didn't have them), so Cardmarket will probably reject ${missing === 1 ? 'it' : 'them'}. Add ${missing === 1 ? 'it' : 'them'} by hand.</p>` : ''}
-    ${solo.length ? `<section class="cmt-solo"><h4>Add these individually · ${solo.reduce((n, r2) => n + r2.items.length, 0)} card${solo.reduce((n, r2) => n + r2.items.length, 0) === 1 ? '' : 's'}</h4>
-      <p class="small muted" style="margin:0 0 6px">You need the same card (same name and attacks) from more than one set. A pasted line can't say which set, so Cardmarket would treat them as one “any version” entry. They're left out of the paste: <b>Open</b> each one and add it from its own page. They're also marked ⧉ under “Your cards”.</p>
-      <ul class="cmt-cards">${solo.flatMap(r2 => r2.items).map(x => { const c = x.c, en = S.cards[x.e.cardId] || x.e;
-        return `<li>${safeUrl(c.img_s) ? `<img src="${esc(safeUrl(c.img_s))}" alt="" loading="lazy">` : '<span class="ph"></span>'}<span><b>${esc(dispName(x.e))}</b><span class="small muted">${esc(en.set_name)} · ${esc(en.number)}${x.e.variant && x.e.variant !== 'normal' ? ` · ${esc(VARIANTS[x.e.variant])}` : ''}</span></span><a class="small" data-cmopen href="${esc(cardmarketUrl(c, en.name))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open' : 'Find'}<span class="sr"> ${esc(en.name)} on Cardmarket</span></a></li>`; }).join('')}</ul></section>` : ''}
-    ${blocks.map((b, i) => `<section class="cmt-block"><div class="row" style="justify-content:space-between;align-items:center"><b>${blocks.length > 1 ? `Block ${i + 1} of ${blocks.length}` : 'Paste this'} · ${b.length} line${b.length === 1 ? '' : 's'}</b><button type="button" class="btn sm primary" data-cmsend="${i}">${ic('copy', 'sm')}Copy</button></div>
-      <pre class="mono small">${esc(b.map(r2 => `${r2.q}x ${r2.text}`).join('\n'))}</pre></section>`).join('')}
+    <div class="row cmt-batch"><label class="small">Cards per wants list <input class="inp sm" data-cmbatch inputmode="numeric" value="${lim}" style="width:70px"></label>
+      <span class="small muted">The Shopping Wizard takes up to 50 cards per list${parts.length > 1 ? `, so this is split into <b>${parts.length} wants lists</b>. Run the Wizard on each; sellers are only combined within a list, so you may pay a little more shipping than one big order.` : '.'}</span></div>
+    ${parts.map((p, pi) => `<section class="cmt-part"><h4>${parts.length > 1 ? `Wants list ${pi + 1} of ${parts.length}` : 'Your wants list'} · ${p.n} card${p.n === 1 ? '' : 's'}</h4>
+      ${p.lines.length ? `<div class="cmt-block"><div class="row" style="justify-content:space-between;align-items:center"><b class="small">Paste · ${p.lines.length} line${p.lines.length === 1 ? '' : 's'}</b><button type="button" class="btn sm primary" data-cmpart="${pi}">${ic('copy', 'sm')}Copy</button></div>
+        <pre class="mono small">${esc(p.lines.map(r2 => `${r2.q}x ${r2.text}`).join('\n'))}</pre></div>` : ''}
+      ${p.solo.length ? `<div class="cmt-solo"><b class="small">Add individually to this list · ${p.solo.length}</b>
+        <p class="small muted" style="margin:2px 0 6px">The same card from more than one set: a pasted line can't say which set, so <b>Open</b> each and add it from its own page.</p>
+        <ul class="cmt-cards">${p.solo.map(x => { const c = x.c, en = S.cards[x.e.cardId] || x.e;
+          return `<li>${safeUrl(c.img_s) ? `<img src="${esc(safeUrl(c.img_s))}" alt="" loading="lazy">` : '<span class="ph"></span>'}<span><b>${esc(dispName(x.e))}</b><span class="small muted">${esc(en.set_name)} · ${esc(en.number)}${x.e.variant && x.e.variant !== 'normal' ? ` · ${esc(VARIANTS[x.e.variant])}` : ''}</span></span><a class="small" data-cmopen href="${esc(cardmarketUrl(c, en.name))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open' : 'Find'}<span class="sr"> ${esc(en.name)} on Cardmarket</span></a></li>`; }).join('')}</ul></div>` : ''}
+    </section>`).join('')}
     <details class="cmt-check" open><summary class="small"><b>Your cards</b> (${rows.reduce((n, r2) => n + r2.items.length, 0)}) — exact set and number to pin</summary><ul class="cmt-cards">${rows.flatMap(r2 => r2.items).map(x => { const c = x.c, en = S.cards[x.e.cardId] || x.e;
       const shared = rows.find(r2 => r2.items.includes(x))?.cards > 1;
       return `<li>${safeUrl(c.img_s) ? `<img src="${esc(safeUrl(c.img_s))}" alt="" loading="lazy">` : '<span class="ph"></span>'}<span><b>${shared ? '<span title="Shares a pasted line with another card">⧉ </span>' : ''}${esc(dispName(x.e))}</b><span class="small muted">${x.jp ? `<b>Japanese print</b> ${esc(c.set_name)} ${esc(c.number)} — set the entry to that Japanese expansion` : `${esc(en.set_name)} · ${esc(en.number)}${x.e.variant && x.e.variant !== 'normal' ? ` · ${esc(VARIANTS[x.e.variant])}` : ''}`} · ${x.gbp != null ? GBP.format(x.gbp) : '—'}</span></span><a class="small" data-cmopen href="${esc(cardmarketUrl(c, en.name))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open' : 'Find'}<span class="sr"> ${esc(en.name)} on Cardmarket</span></a></li>`; }).join('')}</ul>
@@ -1879,8 +1890,13 @@ function renderCmSend() {
       <div id="cmt-alt"></div></section>`;
 }
 document.addEventListener('click', e => { const a2 = e.target.closest?.('[data-cmopen]'); if (a2) a2.closest('li')?.classList.add('done'); });
+document.addEventListener('click', e => { const i = e.target.closest?.('[data-cmpart]')?.dataset.cmpart; if (i == null || !UI.cmSend?.parts) return;
+  const text = UI.cmSend.parts[+i].lines.map(r2 => `${r2.q}x ${r2.text}`).join('\n');
+  navigator.clipboard.writeText(text).then(() => toast(`Wants list ${+i + 1} copied — paste it into a new Cardmarket wants list`, 'success'), () => prompt('Copy this list:', text)); });
+document.addEventListener('change', e => { if (!e.target.matches?.('[data-cmbatch]') || !UI.cmSend?.rows) return;
+  const n = Math.floor(+e.target.value); S.settings.cmBatch = n >= 5 && n <= 150 ? n : 50; save(); renderCmSend(); });
 document.addEventListener('click', e => { const i = e.target.closest?.('[data-cmsend]')?.dataset.cmsend; if (i == null || !UI.cmSend?.rows) return;
-  const text = (UI.cmSend.paste || UI.cmSend.rows).slice(+i * CM_BLOCK, (+i + 1) * CM_BLOCK).map(r2 => `${r2.q}x ${r2.text}`).join('\n');
+  const text = (UI.cmSend.paste || UI.cmSend.rows).slice(+i * CM_BLOCK, (+i + 1) * CM_BLOCK).map(r2 => `${r2.q}x ${r2.text}`).join('\n');   // legacy single-block copy
   navigator.clipboard.writeText(text).then(() => toast('Copied — paste it into your Cardmarket wants list', 'success'), () => prompt('Copy this list:', text)); });
 
 /* Alternative spellings for lines Cardmarket rejected. Cardmarket's matching rules aren't published, so these are

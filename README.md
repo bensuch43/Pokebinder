@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.8
+# PokéBinder Studio v3.8.1
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,12 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## v3.8.1: wants lists of up to 50 cards
+
+Cardmarket's Shopping Wizard only accepts wants lists up to a limit. Its own announcements mention 20 cards, later raised to 50; separately, wants lists hold 150 unique items. A 65-card list failed, so **Send to Cardmarket** now splits the list into wants lists of at most **50 cards** each. Each part has its own paste block, and the cards to add individually are allocated to a part too. The limit is adjustable in the dialog (5–150) if Cardmarket changes it.
+
+Run the Shopping Wizard on each list. It only combines sellers within a list, so shipping may be a little higher than one big order would be.
 
 ## What's new in v3.8: identical reprints
 
