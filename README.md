@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.5
+# PokéBinder Studio v3.6
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,16 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## What's new in v3.6
+
+- **Cost to complete has two orders** (saved per collection):
+  - **Most cards for the money** (default): cheapest first, so a budget completes as many slots as possible.
+  - **Best value now**: cards trading furthest below their own 30-day average come first. Cards that jumped this week (7-day average 15%+ above the 30-day) go last, marked "Wait". Below the Deals minimum price there's no trend signal (one sale moves the average), so those cards are simply cheapest first.
+  The budget is filled in list order, skipping any card that doesn't fit.
+- **Any language** (option): each needed card can be filled by the matching Japanese print when it's cheaper. "Matching" uses the same rule as Deals: same Pokémon, same artist and same rarity type. The Japanese card's picture is shown so you can confirm the artwork. Reverse holo and 1st edition slots stay English, as Japanese sets don't have like-for-like versions. Turning the option on looks up Japanese prints straight away for up to 60 cards; larger collections get a "Check the other N" button. Results are cached for a week.
+- **Copies record a language.** Each printing in a card's ⓘ panel has a language (default English). A copy in any language counts for the slot. A Japanese copy is valued at its matching Japanese print when one is known. Other languages use the card's Cardmarket price, because the price guide doesn't split prices by language. The language shows in CSV exports, and carries over when spares move into Vendor stock.
+- **Limit:** one language per printing per card. If you hold an English and a Japanese copy of the same printing, pick the main one.
 
 ## What's new in v3.5
 

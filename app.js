@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.5.0',
+  version: '3.6.0',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -468,12 +468,28 @@ function ownedTotals(col, onlyIds) {
     for (const [v, r] of Object.entries(rec)) {
       const q = r?.q || 0; if (!q) continue;
       copies += q;
-      const g = priceOf(c, v === 'any' ? primaryVariant(c, col) : v)?.gbp;
+      const g = copyGbp(c, v === 'any' ? primaryVariant(c, col) : v, r);
       if (g != null) value += g * q; else unpriced += q;
       if (r.p > 0) { paid += r.p * q; withPaid += q; if (g != null) plValue += g * q; }
     }
   }
   return { value, paid, pl:plValue - paid, copies, withPaid, unpriced };
+}
+/* Japanese print with the same artwork (same Pokémon, artist and rarity tier — see jpAlternatives), from the
+   saved matches, skipping ones you've said aren't the same card. Cheapest with a usable price wins. */
+function bestJp(c) {
+  const hit = S.jpAlt?.[c?.id]; if (!hit || hit.v !== 3) return null;
+  let best = null;
+  for (const id of hit.ids) { if ((S.jpReject?.[c.id] || []).includes(id)) continue; const j = S.cards[id], pi = j && priceOf(j);
+    if (pi?.gbp > 0 && pi.status !== 'stale' && (!best || pi.gbp < best.pi.gbp)) best = { c:j, pi }; }
+  return best;
+}
+const jpEligible = (c, v) => !!(c && !c.custom && !c.lang && c.dex && c.artist && (!v || v === 'normal' || v === 'holo'));   // Japanese sets have no like-for-like reverse holo / 1st edition
+/* Value of one logged copy. A Japanese copy is valued at its matching Japanese print when one is known. Other
+   languages use the card's Cardmarket price: the price guide has one set of figures per card, not per language. */
+function copyGbp(c, v, rec) {
+  if (rec?.l === 'ja') { const j = bestJp(c); if (j) return j.pi.gbp; }
+  return priceOf(c, v)?.gbp ?? null;
 }
 /* One value snapshot per collection per day, for the Overview chart. Uses the latest prices you've fetched. */
 function recordSnapshot(col) {
@@ -1002,7 +1018,7 @@ function openInfo(entryId) {
     </div></div>
     <section class="inv" aria-label="Your copies">
       <div class="row" style="justify-content:space-between"><b>Your copies</b><span class="small muted">${t.copies ? `${t.copies} held${spares.length ? ` · ${spares.reduce((n, s) => n + s.n, 0)} spare` : ''}${t.value ? ` · worth ${GBP.format(t.value)}` : ''}${t.withPaid ? ` · <span class="${t.pl >= 0 ? 'up' : 'down'}">${t.pl >= 0 ? '+' : '−'}${GBP.format(Math.abs(t.pl))}</span>` : ''}` : 'None yet'}</span></div>
-      ${vlist.map(v => { const r = rec[v] || {}, pv = priceOf(c, v === 'any' ? primaryVariant(c, col) : v);
+      ${vlist.map(v => { const r = rec[v] || {}, pv = (r.l === 'ja' && bestJp(c)?.pi) || priceOf(c, v === 'any' ? primaryVariant(c, col) : v);
         return `<div class="inv-row" data-v="${v}">
           <div><span class="vn">${VARIANTS[v]}</span>${pv ? ` <span class="small muted">· ${priceHtml(pv)} each</span>` : ''}</div>
           <div class="stepper" role="group" aria-label="${VARIANTS[v]} quantity"><button type="button" data-q="-1" aria-label="One fewer">${ic('minus', 'sm')}</button><output>${r.q || 0}</output><button type="button" data-q="1" aria-label="One more">${ic('plus', 'sm')}</button></div>
@@ -1010,7 +1026,8 @@ function openInfo(entryId) {
             <select class="inp" data-f="c" aria-label="${VARIANTS[v]} condition"><option value="">Condition</option>${CONDITIONS.map(k => `<option${r.c === k ? ' selected' : ''}>${k}</option>`).join('')}</select>
             <input class="inp" data-f="p" inputmode="decimal" placeholder="Paid £ each" aria-label="${VARIANTS[v]} price paid per copy (£)" value="${r.p ? esc(r.p) : ''}">
             <input class="inp date" data-f="d" type="date" aria-label="${VARIANTS[v]} date paid" value="${esc(r.d || '')}">
-          </div></div>`; }).join('')}
+            ${c.lang ? '' : `<select class="inp" data-f="l" aria-label="${VARIANTS[v]} language">${Object.entries(LANGS).map(([k, n]) => `<option value="${k}"${(r.l || 'en') === k ? ' selected' : ''}>${n}</option>`).join('')}</select>`}
+          </div>${r.q > 0 && r.l && r.l !== 'en' ? `<p class="small muted lang-note">${r.l === 'ja' ? (bestJp(c) ? `${LANGS.ja} copy — counts for this slot, valued at the matching Japanese print (${esc(bestJp(c).c.set_name)} ${esc(bestJp(c).c.number)}, ${GBP.format(bestJp(c).pi.gbp)}).` : `${LANGS.ja} copy — counts for this slot. No matching Japanese print found yet, so it's valued at the English price.`) : `${esc(LANGS[r.l])} copy — counts for this slot, valued at the card's Cardmarket price (Cardmarket doesn't split prices by language).`}</p>` : ''}</div>`; }).join('')}
       ${c.custom ? '' : `<div class="printings small"><b>Printings that exist</b>
         <ul>${V_ORDER.filter(v => c.variants?.includes(v) || c.vEv?.[v] || c.vHide?.includes(v)).map(v => { const hidden = c.vHide?.includes(v), srcs = c.vEv?.[v] || [], held = rec[v]?.q > 0;
           return `<li${hidden ? ' class="off"' : ''}><span><b>${VARIANTS[v]}</b> <span class="muted">${hidden ? 'hidden by you' : srcs.length ? 'per ' + esc(srcs.join(', ')) : 'listed'}</span></span>${held ? '<span class="muted">you have copies</span>' : `<button type="button" class="btn sm ghost" data-pv="${v}">${hidden ? 'Restore' : 'Not a real printing'}</button>`}</li>`; }).join('') || '<li class="muted">Not known yet — refresh this price to check.</li>'}</ul></div>`}
@@ -1040,6 +1057,7 @@ function openInfo(entryId) {
       if (f === 'p') { const n = parseFloat(inp.value.replace(/[£,\s]/g, '')); if (n > 0 && n < 1e6) r.p = Math.round(n * 100) / 100; else delete r.p; }
       else if (f === 'c') { if (CONDITIONS.includes(inp.value)) r.c = inp.value; else delete r.c; }
       else if (f === 'd') { if (/^\d{4}-\d{2}-\d{2}$/.test(inp.value)) r.d = inp.value; else delete r.d; }
+      else if (f === 'l') { if (LANGS[inp.value] && inp.value !== 'en') r.l = inp.value; else delete r.l; }
       commit();
     }));
   });
@@ -1629,6 +1647,13 @@ document.addEventListener('change', e => {
   const ck = e.target.closest?.('[data-complete]')?.dataset.complete; if (!ck) return;
   UI.complete[ck] = e.target.value; UI.complete.open = true; renderView();
 });
+document.addEventListener('change', e => {
+  const k = e.target.closest?.('[data-copt]')?.dataset.copt; if (!k) return;
+  const col = active(); if (!col) return;
+  col.completeOpts = { ...completeOpts(col), [k]:k === 'jp' ? e.target.checked : (e.target.value === 'value' ? 'value' : 'cheap') };
+  UI.complete.open = true; save(); renderView();
+  if (k === 'jp' && e.target.checked) { const n = UI.layout.cards.filter(x => !col.owned[x.id] && jpEligible(S.cards[x.cardId], x.variant) && S.jpAlt?.[x.cardId]?.v !== 3).length; if (n && n <= 60) completeLookupJp(); }   // small lists: look up straight away
+});
 document.addEventListener('toggle', e => { if (e.target.classList?.contains('complete')) (UI.complete ||= { set:'all', budget:'' }).open = e.target.open; }, true);
 document.addEventListener('change', e => {
   const k = e.target.closest?.('[data-deal]')?.dataset.deal; if (!k) return;
@@ -1688,28 +1713,75 @@ async function startupChecks() {
   if (notes.length) showSince(`Since you last looked: ${notes.join(' · ')}`, acts.slice(0, 2));
 }
 
-/* ---------- cost to complete ---------- */
+/* ---------- cost to complete ----------
+   Order (per collection, default "most cards"):
+     cheap  cheapest first: the most cards for the money, no guesswork
+     value  "best value now": cards trading furthest below their own 30-day average first; cards that jumped this
+            week (7-day average 15%+ over 30-day) go last with a "wait" note. Trend signals only apply at or above the
+            Deals minimum price, because one sale moves the average of a cheap card.
+   "Any language": each card can be filled by the matching Japanese print (same artwork and rarity type, as in Deals)
+   when that's cheaper — a copy in any language counts for the slot. */
+const completeOpts = col => ({ mode:'cheap', jp:false, ...(col.completeOpts || {}) });
+function completeRows(col) {
+  const o = completeOpts(col), minP = dealCfg(col).min;
+  const need = UI.layout.cards.filter(e => !col.owned[e.id] && (UI.complete.set === 'all' || e.set_id === UI.complete.set));
+  const rows = need.map(e => {
+    const c = S.cards[e.cardId] || e, en = priceOf(c, e.variant || undefined);
+    let pick = { c, pi:en, jp:false };
+    if (o.jp && jpEligible(c, e.variant)) { const j = bestJp(c); if (j && (!(en?.gbp > 0) || j.pi.gbp < en.gbp)) pick = { c:j.c, pi:j.pi, jp:true, en }; }
+    const f = tdFigs(pick.c, pick.jp ? null : e.variant), gbp = pick.pi?.gbp;
+    let disc = 0, spike = 0;
+    if (f && gbp >= minP) { if (f.trend > 0) disc = (f.avg30 - f.trend) / f.avg30 * 100; if (f.avg7 > 0) spike = (f.avg7 - f.avg30) / f.avg30 * 100; }
+    return { e, ...pick, gbp, disc, wait:spike >= 15 ? Math.round(spike) : 0 };
+  });
+  const priced = rows.filter(x => x.gbp != null);
+  if (o.mode === 'value') priced.sort((x, y) => (!!x.wait - !!y.wait) || (x.wait ? x.gbp - y.gbp : (y.disc - x.disc) || (x.gbp - y.gbp)));
+  else priced.sort((x, y) => x.gbp - y.gbp);
+  return { o, need, priced, unpriced:rows.length - priced.length };
+}
 function completeHtml(col) {
   UI.complete ||= { set:'all', budget:'' };
-  const need = UI.layout.cards.filter(e => !col.owned[e.id]);
-  if (!need.length) return '';
-  const sets = new Map(); need.forEach(e => sets.set(e.set_id, e.set_name));
+  const all = UI.layout.cards.filter(e => !col.owned[e.id]);
+  if (!all.length) return '';
+  const sets = new Map(); all.forEach(e => sets.set(e.set_id, e.set_name));
   if (UI.complete.set !== 'all' && !sets.has(UI.complete.set)) UI.complete.set = 'all';
-  const rows = need.filter(e => UI.complete.set === 'all' || e.set_id === UI.complete.set).map(e => ({ e, pi:priceOf(S.cards[e.cardId] || e, e.variant || undefined) }));
-  const priced = rows.filter(x => x.pi?.gbp != null).sort((x, y) => x.pi.gbp - y.pi.gbp), unpriced = rows.length - priced.length;
-  const total = priced.reduce((n, x) => n + x.pi.gbp, 0), budget = parseFloat(String(UI.complete.budget).replace(/[£,\s]/g, ''));
-  let spent = 0, fit = 0; if (budget > 0) for (const x of priced) { if (spent + x.pi.gbp > budget) break; spent += x.pi.gbp; fit++; }
-  UI.completeList = priced;
-  return `<details class="panel complete"${UI.complete.open ? ' open' : ''}><summary><span><b>Cost to complete</b> · ≈ ${GBP.format(total)} for ${priced.length} card${priced.length === 1 ? '' : 's'}${unpriced ? ` <span class="muted">(+${unpriced} unpriced)</span>` : ''}</span></summary>
+  const { o, priced, unpriced, need } = completeRows(col);
+  const total = priced.reduce((n, x) => n + x.gbp, 0), budget = parseFloat(String(UI.complete.budget).replace(/[£,\s]/g, ''));
+  const fit = new Set(); let spent = 0;
+  if (budget > 0) for (const x of priced) if (spent + x.gbp <= budget) { spent += x.gbp; fit.add(x); }   // fill in list order, skipping what doesn't fit
+  UI.completeList = priced; UI.completeFit = fit;
+  const eligible = o.jp ? need.filter(e => jpEligible(S.cards[e.cardId], e.variant)) : [], known = eligible.filter(e => S.jpAlt?.[e.cardId]?.v === 3).length;
+  const nJp = priced.filter(x => x.jp).length;
+  const note = x => o.mode !== 'value' ? '' : x.wait ? `<span class="flag low">Wait — up ${x.wait}% this week</span>` : x.disc >= 1 ? `<span class="flag dip">${Math.round(x.disc)}% below 30-day avg</span>` : '';
+  return `<details class="panel complete"${UI.complete.open ? ' open' : ''}><summary><span><b>Cost to complete</b> · ≈ ${GBP.format(total)} for ${priced.length} card${priced.length === 1 ? '' : 's'}${unpriced ? ` <span class="muted">(+${unpriced} unpriced)</span>` : ''}${nJp ? ` <span class="muted">· ${nJp} as Japanese prints</span>` : ''}</span></summary>
     <div class="row complete-cfg">
-      <label class="small">Set <select class="inp sm" data-complete="set"><option value="all">All sets (${need.length})</option>${[...sets].map(([id, n]) => `<option value="${esc(id)}"${UI.complete.set === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+      <label class="small">Order <select class="inp sm" data-copt="mode"><option value="cheap"${o.mode === 'cheap' ? ' selected' : ''}>Most cards for the money</option><option value="value"${o.mode === 'value' ? ' selected' : ''}>Best value now</option></select></label>
+      <label class="small">Set <select class="inp sm" data-complete="set"><option value="all">All sets (${all.length})</option>${[...sets].map(([id, n]) => `<option value="${esc(id)}"${UI.complete.set === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
       <label class="small">Budget £ <input class="inp sm" data-complete="budget" inputmode="decimal" placeholder="e.g. 50" value="${esc(UI.complete.budget)}" style="width:96px"></label>
+      <label class="chk small" style="margin:0"><input type="checkbox" data-copt="jp"${o.jp ? ' checked' : ''}><span>Any language: use the matching Japanese print when cheaper</span></label>
       <button type="button" class="btn sm" data-act="copy-buylist"${priced.length ? '' : ' disabled'}>${ic('copy', 'sm')}Copy buy list</button></div>
-    ${budget > 0 ? `<p class="small" role="status" style="margin:0"><b>${GBP.format(budget)}</b> buys the cheapest <b>${fit} of ${priced.length}</b> (${GBP.format(spent)}). Those are highlighted.</p>` : `<p class="small muted" style="margin:0">Cheapest first, at your chosen price figure. Enter a budget to see how far it goes.</p>`}
-    <ol class="buylist">${priced.slice(0, 200).map((x, i) => { const c = S.cards[x.e.cardId] || x.e;
-      return `<li class="${budget > 0 && i < fit ? 'fit' : ''}"><button class="t" data-act="info" data-id="${esc(x.e.id)}"><b>${esc(dispName(x.e))}</b><span class="small muted">${esc(x.e.set_name)} · ${esc(x.e.number)}</span></button>
-        <span class="price">${priceHtml(x.pi)}</span><a class="small" href="${esc(cardmarketUrl(c))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open' : 'Find'}<span class="sr"> ${esc(c.name)} on Cardmarket</span></a></li>`; }).join('')}</ol>
-    ${priced.length > 200 ? `<p class="small muted">Showing the cheapest 200. Pick a set to narrow it down.</p>` : ''}</details>`;
+    ${o.jp && eligible.length ? (UI.completeBusy ? `<p class="small muted" role="status" id="complete-prog" style="margin:0">Looking up Japanese prints…</p>`
+      : known < eligible.length ? `<p class="small" style="margin:0">Japanese prints checked for ${known} of ${eligible.length} cards. <button type="button" class="btn sm" data-act="complete-jp">Check the other ${eligible.length - known}</button></p>`
+      : `<p class="small muted" style="margin:0">Japanese prints checked for all ${eligible.length} eligible cards (reverse holo and 1st edition slots use English prices). Compare the pictures before buying.</p>`) : ''}
+    ${budget > 0 ? `<p class="small" role="status" style="margin:0"><b>${GBP.format(budget)}</b> buys <b>${fit.size} of ${priced.length}</b> (${GBP.format(spent)})${o.mode === 'value' ? ', best value first' : ', cheapest first'}. Those are highlighted.</p>`
+      : `<p class="small muted" style="margin:0">${o.mode === 'value' ? 'Biggest discount against each card’s own 30-day average first; cards that jumped this week go last. Below the Deals minimum price, cards are simply cheapest first.' : 'Cheapest first, at your chosen price figure. Enter a budget to see how far it goes.'}</p>`}
+    <ol class="buylist">${priced.slice(0, 200).map(x => { const c = x.c;
+      return `<li class="${fit.has(x) ? 'fit' : ''}${x.jp ? ' jp' : ''}">${x.jp ? (safeUrl(c.img_s) ? `<img src="${esc(safeUrl(c.img_s))}" alt="Japanese print" loading="lazy">` : '<span class="ph"></span>') : ''}
+        <button class="t" data-act="info" data-id="${esc(x.e.id)}"><b>${esc(dispName(x.e))}</b><span class="small muted">${esc(x.e.set_name)} · ${esc(x.e.number)}${x.jp ? ` · <b>Japanese print</b> ${esc(c.set_name)} ${esc(c.number)}${x.en?.gbp > 0 ? ` (English ${GBP.format(x.en.gbp)})` : ''}` : ''}</span>${note(x)}</button>
+        <span class="price">${priceHtml(x.pi)}</span><a class="small" href="${esc(cardmarketUrl(c, x.jp ? (S.cards[x.e.cardId] || x.e).name : undefined))}" target="_blank" rel="noopener noreferrer">${c.cmId ? 'Open' : 'Find'}<span class="sr"> ${esc(x.e.name)} on Cardmarket</span></a></li>`; }).join('')}</ol>
+    ${priced.length > 200 ? `<p class="small muted">Showing the first 200. Pick a set to narrow it down.</p>` : ''}</details>`;
+}
+async function completeLookupJp() {
+  const col = active(); if (!col || UI.completeBusy) return;
+  const ids = [...new Set(UI.layout.cards.filter(e => !col.owned[e.id] && jpEligible(S.cards[e.cardId], e.variant) && S.jpAlt?.[e.cardId]?.v !== 3).map(e => e.cardId))];
+  UI.completeBusy = true; UI.complete.open = true; renderView();
+  let n = 0;
+  try {
+    for (let i = 0; i < ids.length; i += 6) await Promise.all(ids.slice(i, i + 6).map(async id => { try { await jpAlternatives(S.cards[id]); } catch { /* skip; retry next time */ }
+      const el = $('#complete-prog'); if (el) el.textContent = `Looking up Japanese prints… ${++n} / ${ids.length}`; }));
+    const alt = [...new Set(ids.flatMap(id => S.jpAlt?.[id]?.ids || []))];
+    if (alt.length) await tcgdexPrices(alt, (k, t) => { const el = $('#complete-prog'); if (el) el.textContent = `Pricing Japanese prints… ${k} / ${t}`; });
+  } finally { UI.completeBusy = false; save(); renderView(); }
 }
 function watchHtml(col) {
   const w = col.watch; if (!w?.artist) return '';
@@ -1854,7 +1926,7 @@ function buildCsv(rows, prices = withPricesOpt()) {
   const head = ['collection','binder_page','binder_slot','spread','side','owned','quantity','spares','printings_held','condition','paid_gbp_each','paid_date','name','variant','number','set_name','set_id','series','release_date','rarity','artist','artist_source','pokedex','card_id','price_gbp','price_native','price_currency','price_source','price_metric','price_date','fx_gbp_per_unit','fx_source','price_fetched'];
   const lines = rows.map(({ col, c, p, own, q, sp }) => { const s = p ? spreadOf(p.page, col.startRight) : {};
     const rec = col.copies?.[c.cardId] || {}, rv = c.variant ? rec[c.variant] || {} : {};
-    const held = Object.entries(rec).filter(([, r]) => r?.q).map(([v, r]) => `${VARIANTS[v]}×${r.q}`).join('; ');
+    const held = Object.entries(rec).filter(([, r]) => r?.q).map(([v, r]) => `${VARIANTS[v]}×${r.q}${r.l && r.l !== 'en' ? ` (${LANGS[r.l]})` : ''}`).join('; ');
     const conds = c.variant ? rv.c || '' : [...new Set(Object.values(rec).map(r => r?.c).filter(Boolean))].join('/');
     const paid = c.variant ? rv.p || '' : (Object.values(rec).find(r => r?.p)?.p || ''), pdate = c.variant ? rv.d || '' : (Object.values(rec).find(r => r?.d)?.d || '');
     return [col.name, p?.page, p?.slot, s.spread, s.side, own ? 'Y' : 'N', q, sp, held, conds, paid, pdate, c.name, c.variant ? VARIANTS[c.variant] : '', c.number, c.set_name, c.set_id, c.series, c.release_date, c.rarity, c.artist, artistSource(c), c.dex, c.cardId || c.id, ...priceCols(c)].filter((_, i) => prices || !PRICE_COLS.has(head[i])).map(csvCell).join(','); });
@@ -1961,11 +2033,12 @@ function sanitizeState(st) {
       for (const [v, r] of Object.entries(rec)) {
         if (!VARIANTS[v] || !r || typeof r !== 'object') continue;
         const q = Math.max(0, Math.min(999, Math.floor(numOr(r.q, 0))));
-        const e = { q }; if (CONDITIONS.includes(r.c)) e.c = r.c; if (r.p > 0 && r.p < 1e6) e.p = +r.p; if (/^\d{4}-\d{2}-\d{2}$/.test(r.d)) e.d = r.d;
+        const e = { q }; if (typeof LANGS === 'object' && LANGS[r.l] && r.l !== 'en') e.l = r.l; if (CONDITIONS.includes(r.c)) e.c = r.c; if (r.p > 0 && r.p < 1e6) e.p = +r.p; if (/^\d{4}-\d{2}-\d{2}$/.test(r.d)) e.d = r.d;
         (col.copies[cid] ||= {})[v] = e;
       }
     }
     if (c.targets && typeof c.targets === 'object') { col.targets = {}; for (const [k, v] of Object.entries(c.targets)) if (cards[k] && !BAD_KEYS.has(k) && v > 0 && v < 1e6) col.targets[k] = Math.round(v * 100) / 100; }
+    if (c.completeOpts && typeof c.completeOpts === 'object') col.completeOpts = { mode:c.completeOpts.mode === 'value' ? 'value' : 'cheap', jp:!!c.completeOpts.jp };
     if (c.deals && typeof c.deals === 'object') col.deals = { scope:c.deals.scope === 'all' ? 'all' : 'needed', dip:[5, 10, 15, 20, 30].includes(c.deals.dip) ? c.deals.dip : 10,
       min:[0, 0.5, 1, 2, 5, 10].includes(c.deals.min) ? c.deals.min : 1, jp:c.deals.jp !== false, auto:c.deals.auto !== false };
     if (c.watch && typeof c.watch === 'object' && str(c.watch.artist, 80)) col.watch = { artist:str(c.watch.artist, 80), at:numOr(c.watch.at, 0),
@@ -2672,15 +2745,16 @@ document.addEventListener('click', e => {
     case 'match-custom': matchCustom(); break;
     case 'deals-scan': scanDeals(); break;
     case 'copy-buylist': {
-      const L2 = UI.completeList || [], b = parseFloat(String(UI.complete?.budget || '').replace(/[£,\s]/g, '')); let spent = 0;
-      const pick = b > 0 ? L2.filter(x => (spent + x.pi.gbp <= b) && (spent += x.pi.gbp, true)) : L2;
-      const text = pick.map(x => `1 ${dispName(x.e)} — ${x.e.set_name} ${x.e.number} — ${GBP.format(x.pi.gbp)}`).join('\n') + `\n\nTotal ≈ ${GBP.format(pick.reduce((n, x) => n + x.pi.gbp, 0))} (${pick.length} cards)`;
+      const L2 = UI.completeList || [], b = parseFloat(String(UI.complete?.budget || '').replace(/[£,\s]/g, ''));
+      const pick = b > 0 ? L2.filter(x => UI.completeFit?.has(x)) : L2;
+      const text = pick.map(x => `1 ${dispName(x.e)} — ${x.e.set_name} ${x.e.number}${x.jp ? ` — Japanese print: ${x.c.set_name} ${x.c.number}` : ''} — ${GBP.format(x.gbp)}`).join('\n') + `\n\nTotal ≈ ${GBP.format(pick.reduce((n, x) => n + x.gbp, 0))} (${pick.length} cards)`;
       navigator.clipboard.writeText(text).then(() => toast(`Copied ${pick.length} card${pick.length === 1 ? '' : 's'}`, 'success'), () => prompt('Copy this list:', text)); break; }
     case 'watch-check': { const col = active(); t.disabled = true;
       checkWatch(col, true).then(r2 => { if (!r2) return; renderView();
         toast(r2.first ? `Now watching. TCGdex lists ${r2.total} ${col.watch.artist} cards; ${r2.missing} aren't in this collection.` : r2.fresh.length ? `${r2.fresh.length} new card(s) since the last check` : `Nothing new from ${col.watch.artist}`, r2.fresh.length ? 'success' : 'info',
           r2.fresh.length || (r2.first && r2.missing) ? { label:'Review', fn:() => reviewArtist(col.id, col.watch.artist) } : undefined); })
         .catch(e => toast(`Couldn't check TCGdex (${e.message})`, 'warn')).finally(() => { t.disabled = false; }); break; }
+    case 'complete-jp': completeLookupJp(); break;
     case 'watch-review': reviewArtist(active().id, active().watch.artist); break;
     case 'deals-stop': UI.dealsAbort?.abort(); break;
     case 'deal-reject': {

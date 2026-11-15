@@ -226,7 +226,10 @@ small{font-size:12px}
 .complete summary{cursor:pointer;min-height:44px;display:flex;align-items:center} .complete[open] summary{margin-bottom:8px}
 .complete-cfg{gap:8px 14px;align-items:center;margin-bottom:8px} .complete-cfg label{display:inline-flex;align-items:center;gap:6px}
 .buylist{margin:8px 0 0;padding-left:28px;display:grid;gap:2px} .buylist li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:4px 6px;border-radius:8px}
-.buylist li.fit{background:var(--ok-soft)} .buylist .t{all:unset;cursor:pointer;display:grid;min-height:44px;align-content:center} .buylist .t:focus-visible{outline:2px solid var(--accent)}
+.buylist li.fit{background:var(--ok-soft)} .buylist li.jp{grid-template-columns:34px minmax(0,1fr) auto auto}
+.buylist li img,.buylist li .ph{width:34px;height:47px;border-radius:4px;object-fit:cover;background:var(--surface-2);display:block}
+.buylist .flag{justify-self:start;margin-top:2px}
+.lang-note{grid-column:1/-1;margin:0} .buylist .t{all:unset;cursor:pointer;display:grid;min-height:44px;align-content:center} .buylist .t:focus-visible{outline:2px solid var(--accent)}
 .buylist a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px;padding:0 4px}
 .pc .v-find .inp{font-size:18px;min-height:52px}
 .pc-list{display:grid;gap:12px;margin-top:12px}
@@ -289,7 +292,7 @@ small{font-size:12px}
 .inv{display:grid;gap:8px;margin-top:14px}
 .inv-row{display:grid;grid-template-columns:1fr auto;gap:8px 10px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface-2)}
 .inv-row .vn{font-weight:650}
-.inv-row .more{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.inv-row .more{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
 .inv-row .more .inp{min-height:44px;font-size:15px}
 .stepper{display:inline-flex;align-items:center;border:1px solid var(--line-2);border-radius:var(--r);overflow:hidden;background:var(--surface)}
 .stepper button{width:44px;height:44px;border:0;background:transparent;display:grid;place-items:center}

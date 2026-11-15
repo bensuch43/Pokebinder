@@ -456,7 +456,7 @@ async function moveSpares() {
   if (!await confirmDlg('Move spares into stock?', `${n} spare cop${n === 1 ? 'y' : 'ies'} leave “${col.name}” and go into your stock for sale, keeping their condition and the price you paid as cost. The copy in each binder pocket stays.`, 'Move to stock')) return;
   const snap = snapshot();
   for (const p of plan) { const rec = col.copies[p.id][p.sv]; const v = p.sv === 'any' ? primaryVariant(p.c, col) : p.sv;
-    rec.q -= p.n; addToStock(p.id, v, rec.c, p.n, rec.p ?? null, 'spares'); }
+    rec.q -= p.n; addToStock(p.id, v, rec.c, p.n, rec.p ?? null, 'spares', rec.l || 'en'); }
   syncOwned(col); col.updated = Date.now(); S.vendor.vtab = 'stock'; vSave();
   undoable(`Moved ${n} spare${n === 1 ? '' : 's'} into stock`, snap);
 }
