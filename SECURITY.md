@@ -115,3 +115,8 @@ All code fixes are done in v2.4. The remaining actions are yours:
 - **New link format:** card IDs grouped by set, no names. Every item must match a strict pattern, IDs pass the same checks as before, quantities are capped at 999, and at most 1,500 items are read. Old formats still decode with their existing checks.
 - **Found and fixed during testing:** a crafted link naming a set `__proto__` crashed the name lookup and left the page stuck on "Loading…". Lookups now ignore inherited keys, and any lookup failure falls back to showing set and number. Re-tested with script-injection text in the collection name and custom-card fields: nothing executed.
 - **Privacy:** opening a link now asks the card databases for the listed card IDs. No personal data is sent, but those services can see which cards were looked up.
+
+## v3.4 addendum
+
+- **Binary share links:** the decoder bounds every read (truncation, varint length, text length capped at 120 bytes, at most 1,500 cards) and validates every set code, card number and ID with the existing patterns. Fuzzed with 3,000 random and corrupted payloads: no hangs or crashes, and no invalid ID got through.
+- **Printing data:** sources are an allow-list of four names; hidden printings must be one of the four known printings.

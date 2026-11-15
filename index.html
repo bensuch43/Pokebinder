@@ -219,6 +219,8 @@ small{font-size:12px}
 .pricebox a{display:inline-flex;align-items:center;min-height:44px}
 @media (pointer:coarse){ .btn.sm{min-height:44px} .inp.sm{min-height:44px} dialog .inp,dialog select.inp{min-height:44px} .chk{min-height:44px;align-items:center} .chk input{width:22px;height:22px;margin-top:0} }
 @media (max-width:560px){ .deal-links{padding-left:10px} .deal-main{grid-template-columns:40px minmax(0,1fr)} .deal-main .price{grid-column:2} }
+.printings{margin-top:4px;padding:10px;border:1px dashed var(--line-2);border-radius:var(--r)} .printings ul{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:4px}
+.printings li{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap} .printings li.off b{text-decoration:line-through;color:var(--text-3)}
 .match-banner{margin-bottom:12px;border-left:3px solid var(--accent)} .match-banner summary{cursor:pointer}
 .plegend{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:5px} .plegend li{display:flex;align-items:baseline;gap:0} .plegend b{color:var(--text);margin-right:4px}
 .qual{padding:8px 10px;border-radius:8px;background:var(--surface)} .qual.good{border-left:3px solid var(--ok)} .qual.fallback{border-left:3px solid var(--warn)} .qual.stale{border-left:3px solid var(--danger)}
@@ -580,7 +582,7 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
           <option value="set">Set name → number</option><option value="name">Card name (A–Z)</option>
         </select></div>
     </div>
-    <label class="chk"><input type="checkbox" id="col-variants"><span>Master set: give each variant its own pocket<small class="muted">Normal, reverse holo, holo and 1st edition prints each get a pocket and count separately towards completion.</small></span></label>
+    <label class="chk"><input type="checkbox" id="col-variants"><span>Master set: give each variant its own pocket<small class="muted">Printings are combined from TCGdex, TCGplayer and Cardmarket listings, and the Pokémon TCG API. Normal, reverse holo, holo and 1st edition prints each get a pocket and count separately towards completion.</small></span></label>
     <label class="chk"><input type="checkbox" id="col-setbreaks"><span>Start each set on a new page<small class="muted">Pads the last page of a set with empty pockets so sets never share a page.</small></span></label>
     <label class="chk"><input type="checkbox" id="col-startright" checked><span>Page 1 is on the right (ring binders)<small class="muted">Untick if your binder has a fixed page on the inside front cover. Only affects how spreads are shown.</small></span></label>
   </div>

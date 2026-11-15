@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.3
+# PokéBinder Studio v3.4
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,19 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## What's new in v3.4
+
+- **More reliable printings (normal / holo / reverse holo / 1st edition).** About a third of TCGdex's English cards have no printing data, so the app now treats a printing as existing if *any* of these sources lists it:
+  - TCGdex's own printing list;
+  - TCGplayer's live listings (one price per printing), via TCGdex;
+  - Cardmarket's reverse-holo price columns, via TCGdex (cards from 2002 on, when reverse holos began);
+  - the Pokémon TCG API data captured when the card was added.
+  This uses the same request as the price refresh, so it costs nothing extra.
+- **See and correct printings.** Each card's ⓘ panel lists the printings that exist and which sources say so. **Not a real printing** hides one (restorable); **Add printing** still adds one. A printing you hold copies of always shows.
+- **Existing collections pick up printings at the next price refresh.** Turning on master-set mode re-checks every card.
+- **Stamps aren't printings.** Staff, prerelease, league and similar stamped versions are ignored when working out printings; only 1st edition counts.
+- **Share links are shorter again** (packed as bytes instead of text, and `index.html` dropped from the address). On a realistic want list they are 25–35% shorter for 10–25 cards and about 15% shorter for large lists. Links from every earlier version still open.
 
 ## What's new in v3.3
 

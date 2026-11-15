@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.3.0',
+  version: '3.4.0',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -124,7 +124,7 @@ function normApi(c) {
   return { id:c.id, name:c.name || '?', number:String(c.number ?? ''), set_id:c.set?.id || 'unknown', set_name:c.set?.name || 'Unknown set',
     series:c.set?.series || '', release_date:(c.set?.releaseDate || '').replace(/\//g,'-'), artist:c.artist || '', rarity:c.rarity || '',
     dex:c.nationalPokedexNumbers?.[0] ?? null, supertype:c.supertype || '', img_s:safeUrl(c.images?.small), img_l:safeUrl(c.images?.large), custom:false,
-    ...(variantsFromApi(c).length ? { variants:variantsFromApi(c) } : {}),
+    ...(variantsFromApi(c).length ? { variants:variantsFromApi(c), vEv:Object.fromEntries(variantsFromApi(c).map(v => [v, ['Pokémon TCG API']])) } : {}),
     ...(normPrice(c) ? { price:normPrice(c) } : {}) };   // omit when absent so a merge never wipes older prices
 }
 /* Which printings exist, inferred from the price feeds (TCGplayer lists one price per printing). */
@@ -200,9 +200,41 @@ const cardIdOf = entryId => String(entryId).split('|')[0];
 const variantOfEntry = entryId => String(entryId).split('|')[1] || null;
 /* Printings for a card in this collection: what the price feeds say exists, plus anything you've logged. */
 function variantsOf(c, col) {
-  const set = new Set(c.variants?.length ? c.variants : ['normal']);
-  Object.keys(col?.copies?.[c.id] || {}).forEach(v => { if (v !== 'any' && VARIANTS[v]) set.add(v); });
+  const hide = c.vHide || [], set = new Set((c.variants?.length ? c.variants : ['normal']).filter(v => !hide.includes(v)));
+  Object.keys(col?.copies?.[c.id] || {}).forEach(v => { if (v !== 'any' && VARIANTS[v]) set.add(v); });   // anything you've logged always shows
+  if (!set.size) set.add((c.variants || []).find(v => !hide.includes(v)) || 'normal');
   return ['normal','holo','reverse','first'].filter(v => set.has(v));
+}
+/* ---------- which printings exist ----------
+   No single source is complete (about a third of TCGdex's English cards have no printing data), so a printing counts
+   if ANY of these says it exists. c.vEv records which ones did, shown in the card's details:
+     TCGdex       its curated printing list (variants_detailed); entries it generated from defaults only count for Normal, and only when nothing else is known
+     TCGplayer    live market listings via TCGdex: one price per printing (Normal / Reverse Holofoil / Holofoil / 1st Edition …)
+     Cardmarket   live price guide via TCGdex: reverse-holo price columns (cards from 2002 on, when reverse holos began)
+     Pokémon TCG API  TCGplayer/Cardmarket printing keys captured when the card was added (frozen, but printings don't change)
+   You can hide a printing that isn't real, or add one; logged copies always show. */
+const V_ORDER = ['normal','holo','reverse','first'];
+function tcpPrinting(k) { k = String(k).toLowerCase(); return /1st/.test(k) ? 'first' : /reverse/.test(k) ? 'reverse' : /holo/.test(k) ? 'holo' : /normal/.test(k) ? 'normal' : null; }
+function printingsFromTd(j, released) {
+  const ev = {}, add = (v, s) => { if (v) (ev[v] ||= new Set()).add(s); };
+  let weakNormal = false;
+  for (const d of Array.isArray(j?.variants_detailed) ? j.variants_detailed : []) {
+    const st = (d?.stamp || []).map(String);
+    const v = st.includes('1st-edition') ? 'first' : st.some(s => s !== 'set-logo') ? null : ({ normal:'normal', holo:'holo', reverse:'reverse' })[d?.type] || null;   // other stamps (staff, prerelease…) aren't printings here
+    if (!v) continue;
+    if (d.variantId === 'generated' && v === 'normal') weakNormal = true; else add(v, 'TCGdex');
+  }
+  for (const k of Object.keys(j?.pricing?.tcgplayer || {})) if (!['unit', 'updated'].includes(k)) add(tcpPrinting(k), 'TCGplayer');
+  const cm = j?.pricing?.cardmarket;
+  if (cm && (cm['trend-holo'] > 0 || cm['avg30-holo'] > 0 || cm['low-holo'] > 0) && (released || '9999') >= '2002-05') add('reverse', 'Cardmarket');
+  if (weakNormal && !Object.keys(ev).length) add('normal', 'TCGdex');
+  return Object.fromEntries(Object.entries(ev).map(([v, s]) => [v, [...s]]));
+}
+function applyPrintings(c, ev) {
+  if (!c || !ev || !Object.keys(ev).length) return;
+  c.vEv ||= {};
+  for (const [v, srcs] of Object.entries(ev)) c.vEv[v] = [...new Set([...(c.vEv[v] || []), ...srcs])];
+  c.variants = V_ORDER.filter(v => c.vEv[v] || c.variants?.includes(v));
 }
 const primaryVariant = (c, col) => variantsOf(c, col)[0];
 const qtyOf = (col, cardId, v) => col.copies?.[cardId]?.[v]?.q || 0;
@@ -896,7 +928,7 @@ $('#form-col').addEventListener('submit', e => {
   const opts = { layout:$('#col-layout').value, sort:$('#col-sort').value, setBreaks:$('#col-setbreaks').checked, startRight:$('#col-startright').checked, variantSlots:$('#col-variants').checked };
   if (colMode === 'edit' && active()) {
     const was = active().variantSlots; Object.assign(active(), opts, { name, updated:Date.now() }); toast('Collection updated', 'success');
-    const unknown = active().cardIds.filter(id => S.cards[id] && !S.cards[id].custom && !S.cards[id].variants).length;
+    const unknown = active().cardIds.filter(id => S.cards[id] && !S.cards[id].custom && !S.cards[id].vEv).length;
     if (opts.variantSlots && !was && unknown) { toast(`Checking which printings exist for ${unknown} card${unknown === 1 ? '' : 's'}…`, 'info'); setTimeout(refreshPrices, 50); }
   }
   else { const c = newCollection(uniqueName(name), opts); S.collections[c.id] = c; S.order.push(c.id); S.activeId = c.id; toast(`Created "${c.name}"`, 'success'); }
@@ -969,10 +1001,13 @@ function openInfo(entryId) {
             <input class="inp" data-f="p" inputmode="decimal" placeholder="Paid £ each" aria-label="${VARIANTS[v]} price paid per copy (£)" value="${r.p ? esc(r.p) : ''}">
             <input class="inp date" data-f="d" type="date" aria-label="${VARIANTS[v]} date paid" value="${esc(r.d || '')}">
           </div></div>`; }).join('')}
+      ${c.custom ? '' : `<div class="printings small"><b>Printings that exist</b>
+        <ul>${V_ORDER.filter(v => c.variants?.includes(v) || c.vEv?.[v] || c.vHide?.includes(v)).map(v => { const hidden = c.vHide?.includes(v), srcs = c.vEv?.[v] || [], held = rec[v]?.q > 0;
+          return `<li${hidden ? ' class="off"' : ''}><span><b>${VARIANTS[v]}</b> <span class="muted">${hidden ? 'hidden by you' : srcs.length ? 'per ' + esc(srcs.join(', ')) : 'listed'}</span></span>${held ? '<span class="muted">you have copies</span>' : `<button type="button" class="btn sm ghost" data-pv="${v}">${hidden ? 'Restore' : 'Not a real printing'}</button>`}</li>`; }).join('') || '<li class="muted">Not known yet — refresh this price to check.</li>'}</ul></div>`}
       ${addable.length ? `<div class="row"><select id="i-addv" class="inp" style="flex:1" aria-label="Add a printing">${addable.map(v => `<option value="${v}">${VARIANTS[v]}</option>`).join('')}</select><button class="btn sm" id="i-addv-go">${ic('plus', 'sm')}Add printing</button></div>` : ''}
     </section>
     ${others.length ? `<div class="row"><select id="i-copy-to" class="inp" style="flex:1" aria-label="Copy to collection">${others.map(cid => `<option value="${esc(cid)}">${esc(S.collections[cid].name)}</option>`).join('')}</select><button class="btn sm" id="i-copy">${ic('copy', 'sm')}Copy to</button></div>` : ''}
-    ${c.custom ? '' : `<p class="small muted" style="margin:0">Card data: Pokémon TCG API · <span class="mono">${esc(c.id)}</span></p>`}`;
+    ${c.custom ? '' : `<p class="small muted" style="margin:0">Card data: ${c.src === 'tcgdex' ? 'TCGdex' : 'Pokémon TCG API'} · <span class="mono">${esc(c.id)}</span></p>`}`;
   $('#i-toggle').innerHTML = col.owned[entryId] ? 'Mark as needed' : `${ic('check', 'sm')}Mark as owned`;
   $('#i-target')?.addEventListener('change', e => {
     const raw = e.target.value.trim(), v = parseFloat(raw.replace(/[£,\s]/g, ''));
@@ -998,6 +1033,13 @@ function openInfo(entryId) {
       commit();
     }));
   });
+  $$('[data-pv]', $('#i-body')).forEach(b => b.addEventListener('click', () => {
+    const v = b.dataset.pv; c.vHide = (c.vHide || []).includes(v) ? c.vHide.filter(x => x !== v) : [...(c.vHide || []), v];
+    if (!c.vHide.length) delete c.vHide;
+    for (const k of Object.values(S.collections)) if (k.cardIds.includes(id)) syncOwned(k);
+    save(); render(); openInfo(col.variantSlots && c.vHide?.includes(v) && variantOfEntry(entryId) === v ? id + '|' + primaryVariant(c, col) : entryId);   // rebuild pockets
+    toast(c.vHide?.includes(v) ? `${VARIANTS[v]} hidden for this card` : `${VARIANTS[v]} restored`, 'success');
+  }));
   $('#i-addv-go')?.addEventListener('click', () => { const v = $('#i-addv').value; ((col.copies ||= {})[id] ||= {})[v] ||= { q:0 }; commit(); });
   $('#i-copy')?.addEventListener('click', () => {
     const tc = S.collections[$('#i-copy-to').value]; tc.cardIds.push(id); tc.updated = Date.now(); save(); renderHeader(active());
@@ -1087,14 +1129,14 @@ async function tdToCard(j, lang = 'en', signal) {
   let id = pt ? `${pt}-${num}` : lang === 'en' ? String(j.id) : `${lang}-${j.id}`;
   if (pt && S.cards[id] && normName(S.cards[id].name) !== normName(j.name)) { id = String(j.id); pt = null; }   // numbering differs: don't collide
   if (!ID_RE.test(id)) id = (lang === 'en' ? '' : lang + '-') + String(j.id).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 50);
-  const v = j.variants || {}, variants = ['normal', 'holo', 'reverse', 'first'].filter(k => k === 'first' ? v.firstEdition : v[k]);
+  const vEv = printingsFromTd(j, set?.rel), variants = V_ORDER.filter(k => vEv[k]);
   const cat = String(j.category || ''), isMon = (j.dexId?.length > 0) || /^pok/i.test(cat);
   const img = safeUrl(j.image || ''), cm = j.pricing?.cardmarket;
   return { id, name:String(j.name || '?'), number:num, set_id:pt || (lang === 'en' ? setId : `${lang}-${setId}`), set_name:set?.name || String(j.set?.name || setId),
     series:(lang !== 'en' ? TD_LANGS[lang] + (set?.serie ? ' · ' : '') : '') + (set?.serie || ''), release_date:/^\d{4}-\d{2}-\d{2}$/.test(set?.rel) ? set.rel : '',
     artist:String(j.illustrator || ''), rarity:j.rarity && j.rarity !== 'None' ? String(j.rarity) : '', dex:j.dexId?.[0] ?? null,
     supertype:isMon ? 'Pokémon' : /trainer/i.test(cat) ? 'Trainer' : /energy/i.test(cat) ? 'Energy' : cat, img_s:img ? img + '/low.webp' : '', img_l:img ? img + '/high.webp' : '',
-    custom:false, src:'tcgdex', tdId:String(j.id), ...(cmIdOf(j) ? { cmId:cmIdOf(j) } : {}), ...(lang !== 'en' ? { lang } : {}), ...(variants.length ? { variants } : {}),
+    custom:false, src:'tcgdex', tdId:String(j.id), ...(cmIdOf(j) ? { cmId:cmIdOf(j) } : {}), ...(lang !== 'en' ? { lang } : {}), ...(variants.length ? { variants, vEv } : {}),
     ...(cm ? { price:{ td:tdPrice(cm), fetched:new Date().toISOString() } } : {}) };
 }
 /* Fetch full details for brief TCGdex cards, 8 at a time. */
@@ -1166,6 +1208,7 @@ async function tcgdexPrices(ids, onProgress, signal) {
       if (c.tdId) {
         const j = await tdJson(c.lang || 'en', `/cards/${encodeURIComponent(c.tdId)}`, signal), cm = j?.pricing?.cardmarket;
         if (j && cmIdOf(j)) c.cmId = cmIdOf(j);
+        if (j) applyPrintings(c, printingsFromTd(j, c.release_date));
         if (cm) { c.price ||= {}; c.price.td = tdPrice(cm); c.price.fetched = c.price.td.fetched; got++; }
       }
     } catch (e) { if (e.name !== 'AbortError') tdFailed++; /* offline or TCGdex busy: keep what we have, and say so */ }
@@ -1243,6 +1286,9 @@ function mergeCard(c) {
   if (old?.src === 'tcgdex' && !c.src) { m.src = 'tcgdex'; if (old.img_s && !c.img_s) { m.img_s = old.img_s; m.img_l = old.img_l; } }
   if (old?.tdId && !m.tdId) m.tdId = old.tdId;
   if (old?.cmId && !m.cmId) m.cmId = old.cmId;
+  if (old?.vHide && !c.vHide) m.vHide = old.vHide;
+  if (old?.vEv || c.vEv) { m.vEv = { ...(old?.vEv || {}) }; for (const [v, s] of Object.entries(c.vEv || {})) m.vEv[v] = [...new Set([...(m.vEv[v] || []), ...s])];
+    m.variants = V_ORDER.filter(v => m.vEv[v] || old?.variants?.includes(v) || c.variants?.includes(v)); }
   S.cards[c.id] = m;
 }
 const artistSource = c => c.artist_assigned ? 'assigned by you' : c.artist_tcgdex ? 'TCGdex' : (c.artist ? 'API' : '');
@@ -1800,6 +1846,9 @@ function sanitizeCard(k, c) {
   if (c.src === 'tcgdex') out.src = 'tcgdex';
   if (Number.isInteger(c.cmId) && c.cmId > 0 && c.cmId < 1e9) out.cmId = c.cmId;
   if (Array.isArray(c.variants)) out.variants = c.variants.filter(v => ['normal','holo','reverse','first'].includes(v));
+  if (Array.isArray(c.vHide)) out.vHide = c.vHide.filter(v => V_ORDER.includes(v));
+  if (c.vEv && typeof c.vEv === 'object') { out.vEv = {}; const OK = ['TCGdex', 'TCGplayer', 'Cardmarket', 'Pokémon TCG API'];
+    for (const v of V_ORDER) if (Array.isArray(c.vEv[v])) { const s = c.vEv[v].filter(x => OK.includes(x)); if (s.length) out.vEv[v] = s; } }
   const pr = c.price;
   if (pr && typeof pr === 'object') {
     const sp = q => q && typeof q === 'object' && q.value > 0 ? { value:+q.value, metric:str(q.metric, 60), low:numOr(q.low), avg30:numOr(q.avg30), rev:numOr(q.rev),
@@ -2036,6 +2085,76 @@ async function pipeBytes(bytes, stream, maxOut = Infinity) {
 const KIND_CODE = { want:'w', trade:'t', list:'l', sale:'s' }, CODE_KIND = { w:'want', t:'trade', l:'list', s:'sale' };
 const V_CODE = { holo:'h', reverse:'r', first:'f' }, CODE_V = { h:'holo', r:'reverse', f:'first' };
 const clean = s => String(s ?? '').replace(/[|\n\r]/g, ' ').trim();
+/* Format 4 (v3.4): the same content as format 2, packed as bytes instead of text — set codes become a number from a
+   fixed list, card numbers are stored as the gap from the previous number, prices as whole pence. About 30% shorter.
+   SHARE_SETS is frozen: only ever APPEND to it, or links already sent would decode to the wrong sets. */
+const SHARE_SETS = '2011bw,2012bw,2014xy,2015xy,2016xy,2017sm,2018sm,2019sm,2021swsh,2022swsh,30th,base1,base2,base3,base4,base5,base6,basep,bog,bp,bw1,bw10,bw11,bw2,bw3,bw4,bw5,bw6,bw7,bw8,bw9,bwp,cel25,cel25c,cel25cc,col1,dc1,det1,dp1,dp2,dp3,dp4,dp5,dp6,dp7,dpp,dv1,ecard1,ecard2,ecard3,ex1,ex10,ex11,ex12,ex13,ex14,ex15,ex16,ex2,ex3,ex4,ex5,ex6,ex7,ex8,ex9,fut20,g1,gym1,gym2,hgss1,hgss2,hgss3,hgss4,hgssp,hsp,lc,mcd11,mcd12,mcd14,mcd15,mcd16,mcd17,mcd18,mcd19,mcd21,mcd22,me01,me02,me02.5,me03,me04,me05,me1,me2,me2pt5,me3,me4,me5,me55,me55c,neo1,neo2,neo3,neo4,np,pgo,pl1,pl2,pl3,pl4,pop1,pop2,pop3,pop4,pop5,pop6,pop7,pop8,pop9,rsv10pt5,ru1,si1,sm1,sm10,sm11,sm115,sm12,sm2,sm3,sm3.5,sm35,sm4,sm5,sm6,sm7,sm7.5,sm75,sm8,sm9,sma,smp,sv01,sv02,sv03,sv03.5,sv04,sv04.5,sv05,sv06,sv06.5,sv07,sv08,sv08.5,sv09,sv1,sv10,sv10.5b,sv10.5w,sv2,sv3,sv3pt5,sv4,sv4pt5,sv5,sv6,sv6pt5,sv7,sv8,sv8pt5,sv9,sve,svp,swsh1,swsh10,swsh10.5,swsh10tg,swsh11,swsh11tg,swsh12,swsh12.5,swsh12.5gg,swsh12pt5,swsh12pt5gg,swsh12tg,swsh2,swsh3,swsh3.5,swsh35,swsh4,swsh4.5,swsh4.5sv,swsh45,swsh45sv,swsh5,swsh6,swsh7,swsh8,swsh9,swsh9tg,swshp,tk-ex-latia,tk-ex-latio,tk-ex-m,tk-ex-p,tk1a,tk1b,tk2a,tk2b,xy0,xy1,xy10,xy11,xy12,xy2,xy3,xy4,xy5,xy6,xy7,xy8,xy9,xyp,zsv10pt5'.split(',');
+const SHARE_SET_IX = new Map(SHARE_SETS.map((s, i) => [s, i]));
+const TD_LANG_LIST = ['en', 'ja', 'ko', 'zh-tw', 'zh-cn'], DAY0 = Date.UTC(2020, 0, 1);
+const LANG_LIST = ['en', 'ja', 'de', 'fr', 'it', 'es', 'pt', 'nl', 'pl', 'ko', 'zh'];   // fixed order for links (same as LANGS in vendor.js, which loads later)
+/* Byte layout: head (kind + prices flag), name, date (days since 2020), card count, then per card:
+     flags  bit0 new set follows · bit1 extras · bits2-3 printing · bit4 number is text (else a gap from the last number)
+     [set]  only when it changes: ref = index*4 + type (0 known set, 1 other set by name, 2 known set on TCGdex, 3 TCGdex other language), then pad
+     number gap or text · [extras: qty, language] · [price in pence + 1, when prices are included]
+   Custom cards follow, with their names. */
+function packShare({ kind, name, prices, groups, customs }) {
+  const out = [], uv = n => { n = Math.max(0, Math.floor(n)); while (n > 127) { out.push((n & 127) | 128); n = Math.floor(n / 128); } out.push(n); };
+  const sv = s => { const b = new TextEncoder().encode(String(s).slice(0, 120)); uv(b.length); out.push(...b); };
+  uv(['want', 'trade', 'list', 'sale'].indexOf(kind) & 3 | (prices ? 4 : 0)); sv(name); uv((Date.now() - DAY0) / 864e5);
+  uv(groups.reduce((n, g) => n + g.items.length, 0));
+  for (const g of groups) {
+    let prev = 0, first = true;
+    for (const it of g.items) {
+      const numeric = /^\d{1,6}$/.test(it.num) && (g.pad ? it.num.length === g.pad : !/^0\d/.test(it.num)) && +it.num >= prev;
+      const extra = it.qty > 1 || it.lang ? 1 : 0;
+      uv((first ? 1 : 0) | extra << 1 | ({ holo:1, reverse:2, first:3 }[it.v] || 0) << 2 | (numeric ? 0 : 16));
+      if (first) {
+        const ix = !g.td || g.lang === 'en' ? SHARE_SET_IX.get(g.set) : undefined;
+        if (!g.td) { if (ix != null) uv(ix * 4); else { uv(1); sv(g.set); } }
+        else if (ix != null) { uv(ix * 4 + 2); uv(g.pad); }
+        else { uv(3); uv(TD_LANG_LIST.indexOf(g.lang)); sv(g.set); uv(g.pad); }
+        first = false;
+      }
+      if (numeric) { uv(+it.num - prev); prev = +it.num; } else sv(it.num);
+      if (extra) { uv((it.qty > 1 ? 1 : 0) | (it.lang ? 2 : 0)); if (it.qty > 1) uv(it.qty); if (it.lang) uv(LANG_LIST.indexOf(it.lang)); }
+      if (prices) uv(it.pence != null ? it.pence + 1 : 0);
+    }
+  }
+  uv(customs.length);
+  for (const x of customs) { sv(x.id); sv(x.name); sv(x.number); sv(x.set_name); uv({ holo:1, reverse:2, first:3 }[x.v] || 0); uv(x.qty); uv(x.pence != null ? x.pence + 1 : 0); }
+  return new Uint8Array(out);
+}
+function unpackShare(bytes) {
+  let p = 0; const uv = () => { let n = 0, mul = 1; for (let i = 0; i < 5; i++) { if (p >= bytes.length) throw new Error('truncated link'); const b = bytes[p++]; n += (b & 127) * mul; if (b < 128) return n; mul *= 128; } throw new Error('bad number'); };
+  const sv = () => { const n = uv(); if (n > 120 || p + n > bytes.length) throw new Error('bad text'); const s = new TextDecoder().decode(bytes.subarray(p, p + n)); p += n; return s; };
+  const CV = ['', 'holo', 'reverse', 'first'], head = uv(), kind = ['want', 'trade', 'list', 'sale'][head & 3], prices = !!(head & 4);
+  const name = sv(), days = uv(), date = days < 40000 ? new Date(DAY0 + days * 864e5).toISOString().slice(0, 10) : '';
+  const items = [], push = (id, extra) => { if (items.length < 1500 && ID_RE.test(id) && !BAD_KEYS.has(id)) items.push({ id, name:'', number:'', set_id:'', set_name:'', rarity:'', img:'', ...extra }); };
+  const n = Math.min(uv(), 1500); let set = null, td = false, lang = 'en', pad = 0, prev = 0;
+  for (let i = 0; i < n; i++) {
+    const f = uv(), v = CV[(f >> 2) & 3];
+    if (f & 1) {
+      const ref = uv(), type = ref & 3; prev = 0;
+      if (type === 0) { set = SHARE_SETS[ref >> 2]; td = false; pad = 0; }
+      else if (type === 1) { set = sv(); td = false; pad = 0; }
+      else if (type === 2) { set = SHARE_SETS[ref >> 2]; td = true; lang = 'en'; pad = Math.min(uv(), 6); }
+      else { td = true; lang = TD_LANG_LIST[uv()]; set = sv(); pad = Math.min(uv(), 6); }
+      if (!set || !/^[A-Za-z0-9._-]{1,40}$/.test(set) || (td && !lang)) throw new Error('bad set');
+    } else if (!set) throw new Error('unrecognised link');
+    let num; if (f & 16) num = sv(); else { prev += uv(); num = pad ? String(prev).padStart(pad, '0') : String(prev); }
+    let q = 1, l = '';
+    if (f & 2) { const x = uv(); if (x & 1) q = Math.max(1, Math.min(999, uv())); if (x & 2) l = LANG_LIST[uv()] || ''; }
+    const pc = prices ? uv() : 0;
+    if (!/^[A-Za-z0-9._]{1,30}$/.test(num)) continue;
+    const base = { variant:v, n:q, gbp:pc ? (pc - 1) / 100 : null, lang:LANGS[l] ? l : '', number:num.replace(/^0+(?=\d)/, '') };
+    if (td) push(`${lang === 'en' ? '' : lang + '-'}${set}-${num}`, { ...base, set_id:(lang === 'en' ? '' : lang + '-') + set, set_name:set, src:'T', tdLang:lang, tdSet:set, local:num, lang:shareLang(lang) });
+    else push(`${set}-${num}`, { ...base, set_id:set, set_name:set, src:'P' });
+  }
+  const nc = Math.min(uv(), 1500);
+  for (let i = 0; i < nc; i++) { const id = sv(), nm = sv(), num = sv(), setName = sv(), v = CV[uv()] || '', q = uv(), pc = uv();
+    push(id, { name:str(nm, 120) || '?', number:str(num, 20), set_id:'custom-' + str(setName, 40), set_name:str(setName, 100) || 'Custom', variant:v, n:Math.max(1, Math.min(999, q || 1)), gbp:pc ? (pc - 1) / 100 : null, lang:'', img:'-', done:true }); }
+  return { kind, name:str(name, 80) || 'A collection', date, items, pending:items.some(i => !i.done) };
+}
 async function buildShareUrl(rows, withPrices = true, kind) {
   const f = exportFilters?.() || {};
   kind ||= SHARE_KIND[f.status] || 'list';
@@ -2053,11 +2172,15 @@ async function buildShareUrl(rows, withPrices = true, kind) {
     else { key = `P${id.slice(0, cut)}`; item = id.slice(cut + 1); }
     if (!groups.has(key)) groups.set(key, []); groups.get(key).push(item + tail);
   }
-  const text = [`${KIND_CODE[kind] || 'l'}|${clean(cols.length === 1 ? cols[0] : 'Several collections')}|${today()}`, ...[...groups].map(([k, items]) => `${k}\n${items.join(',')}`), ...customs].join('\n');
-  const raw = new TextEncoder().encode(text);
-  let token = '3.' + b64u(raw);
-  if ('CompressionStream' in window) { const z = '2.' + b64u(await pipeBytes(raw, new CompressionStream('deflate-raw'))); if (z.length < token.length) token = z; }
-  return `${location.origin}${location.pathname}#s=${token}`;
+  const gl = [...groups].map(([k, items]) => { const td = k[0] === 'T', [lang, set] = td ? k.slice(1).split('/') : [null, k.slice(1)];
+    const parsed = items.map(s => { const m = /^([^~*=@]+)(?:~([hrf]))?(?:\*(\d+))?(?:=(\d+))?(?:@([a-z]{2}))?$/.exec(s); return { num:m[1], v:CODE_V[m[2]] || '', qty:+(m[3] || 1), pence:m[4] != null ? +m[4] : null, lang:m[5] || '' }; });
+    const pads = parsed.filter(x => /^0\d/.test(x.num)).map(x => x.num.length);
+    return { td, lang, set, pad:td && pads.length ? Math.max(...pads) : 0, items:parsed }; });
+  const cs = customs.map(line => { const p = line.slice(1).split('|'); return { id:p[0], name:p[1], number:p[2], set_name:p[3], v:CODE_V[p[4]] || '', qty:+p[5] || 1, pence:p[6] !== '' ? +p[6] : null }; });
+  const raw = packShare({ kind, name:clean(cols.length === 1 ? cols[0] : 'Several collections'), prices:withPrices, groups:gl, customs:cs });
+  let token = '4.' + b64u(raw);
+  if ('CompressionStream' in window) { const z = '5.' + b64u(await pipeBytes(raw, new CompressionStream('deflate-raw'))); if (z.length < token.length) token = z; }
+  return `${location.origin}${location.pathname.replace(/index\.html$/, '')}#s=${token}`;   // the site serves index.html for its folder
 }
 async function shareRows(rows, forceKind) {
   if (!rows.length) { toast('Nothing to share with these filters', 'warn'); return; }
@@ -2075,12 +2198,13 @@ async function shareRows(rows, forceKind) {
   catch { prompt('Copy this link:', url); }
 }
 async function decodeShare(token) {
-  if (typeof token !== 'string' || token.length > 400000 || !/^[0-3]\.[A-Za-z0-9_-]+$/.test(token)) throw new Error('invalid link');
+  if (typeof token !== 'string' || token.length > 400000 || !/^[0-5]\.[A-Za-z0-9_-]+$/.test(token)) throw new Error('invalid link');
   let bytes = unb64u(token.slice(2));
-  if (token[0] === '1' || token[0] === '2') {
+  if (token[0] === '1' || token[0] === '2' || token[0] === '5') {
     if (!('DecompressionStream' in window)) throw new Error('this browser can\'t open compressed links — try Chrome, Edge or Safari 16.4+');
     bytes = await pipeBytes(bytes, new DecompressionStream('deflate-raw'), 4e6);   // guard against decompression bombs
   }
+  if (token[0] === '4' || token[0] === '5') return unpackShare(bytes);
   if (token[0] === '2' || token[0] === '3') return decodeShare2(new TextDecoder().decode(bytes));
   const j = JSON.parse(new TextDecoder().decode(bytes));
   if (!j || j.v !== 1 || !Array.isArray(j.a)) throw new Error('unrecognised link');
