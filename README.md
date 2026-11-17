@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.9.2
+# PokéBinder Studio v3.9.3
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -108,13 +108,19 @@ What gets flagged, biggest saving first:
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
 
+## v3.9.3: market prices for patterns
+- Check v2 showed every Poké Ball / Master Ball pattern is its **own product on Cardmarket and TCGplayer**, with its own prices in TCGdex.
+- **Which figure:** Cardmarket's *foil* columns. Sellers list patterns as foil, so the plain columns are thin or nonsense (Master Ball Exeggutor: plain trend €0.25, foil trend €6.50, TCGplayer $9.93). Your *Price figure* setting (trend / 30-day / 7-day) applies; with *Price source* set to TCGplayer, its market price is used first.
+- **Mix-up warnings (amber dot):** some listings look swapped. White Flare Swadloon is €14.71 Poké Ball / €0.36 Master Ball on Cardmarket but $0.36 / $15.93 on TCGplayer, and Japanese 151 Ivysaur has Poké Ball far above Master Ball. A pattern is flagged when Cardmarket and TCGplayer are more than 3× apart, or a Poké Ball is priced well above the same card's Master Ball. Check those before trading and type a value if needed.
+- **Your value still wins.** Clear it to go back to the market price.
+- Prices arrive with the normal refresh (binder *Refresh prices*, Stock *Refresh prices*, or opening a card).
+
 ## v3.9.2: patterns detected from TCGdex
 - The check came back YES: TCGdex lists Poké Ball / Master Ball versions as their own entries (`foil: "pokeball"` / `"masterball"`) in Prismatic Evolutions, Black Bolt, White Flare and Japanese 151. Holo-only cards (the ex cards) have none.
 - **Detection:** on the next price refresh, cards pick up their pattern versions from TCGdex. On the vendor screens a card TCGdex has data for offers exactly the patterns it has; cards without TCGdex data still fall back to offering both on 2023-on cards.
 - **Master sets:** new per-collection option *Include Poké Ball and Master Ball pockets* (under the master-set option). Off by default, so existing master sets don't suddenly gain hundreds of pockets.
 - **Cardmarket button** beside a pattern value when Cardmarket has a separate product for that pattern (Japanese 151 does). It opens that exact product.
 - **Japanese 151 fix:** these cards were credited with a plain reverse holo because Cardmarket's foil column was read as "a reverse exists". When TCGdex says a card's only foils are patterns, that's no longer inferred.
-- **Values are still typed in by you.** Feed prices for patterns wait on the second check (below), which settles which figures are really the pattern's.
 - **Check v2** (Settings → Diagnostics) now lists every version of each card with its Cardmarket and TCGplayer product numbers, says whether each pattern has its own product or shares the plain card's listing, and prints each pattern's full price record.
 
 ## v3.9.1: TCGdex pattern check

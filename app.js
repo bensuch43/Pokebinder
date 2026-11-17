@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.9.2',
+  version: '3.9.3',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -257,6 +257,21 @@ function patternIdsFromTd(j) {
     out[f] = { ...(cm ? { cm } : {}), ...(tcp ? { tcp } : {}), own:!!(cm && cm !== baseCm), ownTcp:!!(tcp && tcp !== baseTcp) }; }
   return out;
 }
+/* Per-pattern market prices from TCGdex. Each pattern is its own Cardmarket and TCGplayer product. Sellers list
+   them as foil, so Cardmarket's "-holo" columns are the pattern's price; its plain columns are thin or empty
+   (Master Ball Exeggutor: plain trend €0.25, foil trend €6.50, TCGplayer $9.93). */
+function patternPricesFromTd(j) {
+  const out = {}, n = x => x > 0 && x < 1e6 ? +x : null;
+  for (const d of Array.isArray(j?.variants_detailed) ? j.variants_detailed : []) {
+    const f = String(d?.foil || '').toLowerCase(); if (!isPattern(f) || out[f]) continue;
+    const cm = d?.pricing?.cardmarket, tp = d?.pricing?.tcgplayer;
+    const tpRow = tp && typeof tp === 'object' ? (tp.holofoil || tp['reverse-holofoil'] || Object.values(tp).find(x => x && typeof x === 'object' && x.marketPrice > 0)) : null;
+    const rec = { trendH:n(cm?.['trend-holo']), avg30H:n(cm?.['avg30-holo']), avg7H:n(cm?.['avg7-holo']), lowH:n(cm?.['low-holo']), updated:String(cm?.updated || '').slice(0, 10),
+      tcp:n(tpRow?.marketPrice), tcpUpd:String(tp?.updated || '').slice(0, 10) };
+    if (rec.trendH || rec.avg30H || rec.avg7H || rec.tcp) out[f] = rec;
+  }
+  return out;
+}
 function applyPrintings(c, ev) {
   if (!c || !ev || !Object.keys(ev).length) return;
   c.vEv ||= {};
@@ -461,11 +476,32 @@ function pickCardmarket(c, variant) {
   if (!hit) { hit = best(figs.filter(f => f.fig === want)) || FIG_FALLBACK.map(f => best(figs.filter(x => x.fig === f))).find(Boolean) || best(figs); status = 'stale'; }
   return { hit, status, want };
 }
-/* Your value for a Poké Ball / Master Ball pattern, or null (never the plain reverse-holo price). */
+/* Market figure for a pattern from its own product: Cardmarket foil columns or TCGplayer, by your price-source setting. */
+function patternFeed(c, v) {
+  const f = c?.patPx?.[v]; if (!f) return null;
+  const MAP = { trend:'trendH', avg30:'avg30H', avg7:'avg7H', low:'lowH' }, want = figPref();
+  let fig = want, cmV = f[MAP[want]];
+  if (!(cmV > 0)) for (const k of FIG_FALLBACK) if (f[MAP[k]] > 0) { fig = k; cmV = f[MAP[k]]; break; }
+  const er = fxRate('EUR'), ur = fxRate('USD');
+  const cm = cmV > 0 ? { gbp:er ? cmV * er : null, native:cmV, cur:'EUR', src:'Cardmarket, foil (pattern product, via TCGdex)', metric:PRICE_FIG[fig], fig, date:f.updated } : null;
+  const tp = f.tcp > 0 ? { gbp:ur ? f.tcp * ur : null, native:f.tcp, cur:'USD', src:'TCGplayer (pattern product, via TCGdex)', metric:'market price', fig:'market', date:f.tcpUpd } : null;
+  const tcpFirst = (S.settings.priceSource || CONFIG.priceSource) === 'tcgplayer', pick = (tcpFirst ? tp || cm : cm || tp);
+  return pick ? { ...pick, cm, tp, fallbackSrc:pick === (tcpFirst ? cm : tp) } : null;
+}
+/* Your value wins. Otherwise the pattern's market price, marked amber when the sources look mixed up:
+   Cardmarket and TCGplayer more than 3× apart, or a Poké Ball priced well above the same card's Master Ball. */
 function patternPrice(c, v) {
-  const x = c?.pp?.[v]; if (!(x?.gbp > 0)) return null;
-  return { gbp:x.gbp, native:x.gbp, cur:'GBP', src:x.usd ? `your value (PriceCharting $${x.usd.toFixed(2)})` : 'your value', metric:'value you set', fig:'manual', want:'manual',
+  const x = c?.pp?.[v];
+  if (x?.gbp > 0) return { gbp:x.gbp, native:x.gbp, cur:'GBP', src:x.usd ? `your value (PriceCharting $${x.usd.toFixed(2)})` : 'your value', metric:'value you set', fig:'manual', want:'manual',
     date:x.at || '', url:pricechartingUrl(c, v), fetched:x.at || '', status:'manual', stale:false, fallback:false, trend:null };
+  const f = patternFeed(c, v); if (!f) return null;
+  const notes = [];
+  if (f.cm?.gbp && f.tp?.gbp) { const hi = Math.max(f.cm.gbp, f.tp.gbp), lo = Math.min(f.cm.gbp, f.tp.gbp); if (hi > 1 && hi / lo > 3) notes.push(`Cardmarket ${GBP.format(f.cm.gbp)} vs TCGplayer ${GBP.format(f.tp.gbp)}`); }
+  const pb = patternFeed(c, 'pokeball')?.gbp, mb = patternFeed(c, 'masterball')?.gbp;
+  if (pb > 1 && mb > 0 && pb > mb * 1.5) notes.push('Poké Ball priced above Master Ball');
+  const fresh = isFresh(f.date), status = notes.length || f.fallbackSrc ? 'fallback' : fresh ? 'good' : 'stale';
+  return { gbp:f.gbp, native:f.native, cur:f.cur, src:f.src, metric:f.metric, fig:f.fig, want:figPref(), date:f.date, url:patternCmUrl(c, v) || pricechartingUrl(c, v), fetched:c.price?.td?.fetched || '',
+    status, stale:status === 'stale', fallback:status === 'fallback', trend:null, note:notes.join('; '), feed:f };
 }
 /* Set (or clear) your value for a pattern. Accepts "8.50", "£8.50" or "$11.06" (converted at the current $ rate). */
 function setPatternValue(id, v, raw) {
@@ -481,11 +517,14 @@ function setPatternValue(id, v, raw) {
 }
 function patternValueHtml(id, v, compact) {
   const c = S.cards[id]; if (!c || !isPattern(v)) return '';
-  const x = c.pp?.[v];
+  const x = c.pp?.[v], f = patternFeed(c, v), mk = f ? patternPrice({ ...c, pp:{} }, v) : null;   // market figure, ignoring your value
+  const other = f?.cm && f?.tp ? (f.cur === 'EUR' ? `TCGplayer ${NATIVE.USD.format(f.tp.native)}` : `Cardmarket ${NATIVE.EUR.format(f.cm.native)}`) : '';
+  const feedLine = mk ? `Market ${priceHtml(mk)}${other ? ` <span class="muted">(${other})</span>` : ''}${mk.note ? `<br><span class="down">${esc(mk.note)}: listings may be mixed up, check before trading</span>` : ''}` : '';
   return `<div class="ppv${compact ? ' compact' : ''}"><span class="small ppv-h">${esc(VARIANTS[v])} value <span class="muted">${compact ? '(£ or $)' : '(£, or $ from PriceCharting)'}</span></span>
-    <input class="inp" data-ppv="${esc(id)}" data-v="${v}" inputmode="decimal" autocomplete="off" placeholder="e.g. 8.50" value="${x ? x.gbp.toFixed(2) : ''}" aria-label="${esc(VARIANTS[v])} value in pounds, or dollars with a $ sign">
-    <span class="row" style="gap:4px;flex-wrap:nowrap"><a class="btn sm ghost" href="${esc(pricechartingUrl(c, v))}" target="_blank" rel="noopener noreferrer">PriceCharting</a>${patternCmUrl(c, v) ? `<a class="btn sm ghost" href="${esc(patternCmUrl(c, v))}" target="_blank" rel="noopener noreferrer">Cardmarket</a>` : ''}</span>
-    ${x ? `<small class="muted">${x.usd ? `$${x.usd.toFixed(2)} → ` : ''}set ${esc(x.at)}</small>` : (compact ? '<small class="muted">No feed prices patterns — look it up.</small>' : '<small class="muted">No market feed prices this pattern — look it up and type the value.</small>')}</div>`;
+    <input class="inp" data-ppv="${esc(id)}" data-v="${v}" inputmode="decimal" autocomplete="off" placeholder="${f ? 'market price' : 'e.g. 8.50'}" value="${x ? x.gbp.toFixed(2) : ''}" aria-label="${esc(VARIANTS[v])} value in pounds, or dollars with a $ sign">
+    <span class="ppv-links"><a class="btn sm ghost" href="${esc(pricechartingUrl(c, v))}" target="_blank" rel="noopener noreferrer">PriceCharting</a>${patternCmUrl(c, v) ? `<a class="btn sm ghost" href="${esc(patternCmUrl(c, v))}" target="_blank" rel="noopener noreferrer">Cardmarket</a>` : ''}</span>
+    ${x ? `<small class="muted">Your value: ${x.usd ? `$${x.usd.toFixed(2)} → ` : ''}set ${esc(x.at)}${feedLine ? ` · overrides ${feedLine.replace(/^Market /, 'market ')}` : ''}. Clear the box to use the market price.</small>`
+      : feedLine ? `<small>${feedLine}. Type a value to override it.</small>` : `<small class="muted">${compact ? 'No market price yet — refresh prices, or look it up.' : 'No market price for this pattern yet. Refresh prices, or look it up and type a value.'}</small>`}</div>`;
 }
 document.addEventListener('change', e => {
   const el = e.target; if (!el?.dataset?.ppv) return;
@@ -578,6 +617,7 @@ const QUALITY = { good:'Good data', fallback:'Fallback figure', stale:'Stale pri
 function qualityText(pi) {
   if (!pi) return 'No price available';
   if (pi.status === 'manual') return `Your value${pi.date ? ', set ' + pi.date : ''} — ${pi.src}`;
+  if (pi.note) return `Check this price (${pi.note}; listings may be mixed up). ${pi.metric} · ${pi.src} · price date ${pi.date || 'unknown'}`;
   const base = `${pi.metric} · ${pi.src} · price date ${pi.date || 'unknown'}`;
   return pi.status === 'good' ? `Good data: ${base}` : pi.status === 'fallback' ? `Fallback: ${pi.want ? PRICE_FIG[pi.want] + ' not available or out of date, using ' : ''}${base}` : `Stale: ${base} — older than ${CONFIG.priceStaleDays} days`;
 }
@@ -1220,14 +1260,14 @@ async function tdToCard(j, lang = 'en', signal) {
   let id = pt ? `${pt}-${num}` : lang === 'en' ? String(j.id) : `${lang}-${j.id}`;
   if (pt && S.cards[id] && normName(S.cards[id].name) !== normName(j.name)) { id = String(j.id); pt = null; }   // numbering differs: don't collide
   if (!ID_RE.test(id)) id = (lang === 'en' ? '' : lang + '-') + String(j.id).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 50);
-  const vEv = printingsFromTd(j, set?.rel), variants = V_ALL.filter(k => vEv[k]), patIds = patternIdsFromTd(j);
+  const vEv = printingsFromTd(j, set?.rel), variants = V_ALL.filter(k => vEv[k]), patIds = patternIdsFromTd(j), patPx = patternPricesFromTd(j);
   const cat = String(j.category || ''), isMon = (j.dexId?.length > 0) || /^pok/i.test(cat);
   const img = safeUrl(j.image || ''), cm = j.pricing?.cardmarket;
   return { id, name:String(j.name || '?'), number:num, set_id:pt || (lang === 'en' ? setId : `${lang}-${setId}`), set_name:set?.name || String(j.set?.name || setId),
     series:(lang !== 'en' ? TD_LANGS[lang] + (set?.serie ? ' · ' : '') : '') + (set?.serie || ''), release_date:/^\d{4}-\d{2}-\d{2}$/.test(set?.rel) ? set.rel : '',
     artist:String(j.illustrator || ''), rarity:j.rarity && j.rarity !== 'None' ? String(j.rarity) : '', dex:j.dexId?.[0] ?? null,
     supertype:isMon ? 'Pokémon' : /trainer/i.test(cat) ? 'Trainer' : /energy/i.test(cat) ? 'Energy' : cat, img_s:img ? img + '/low.webp' : '', img_l:img ? img + '/high.webp' : '',
-    custom:false, src:'tcgdex', tdId:String(j.id), ...(cmIdOf(j) ? { cmId:cmIdOf(j) } : {}), ...(lang !== 'en' ? { lang } : {}), ...(variants.length ? { variants, vEv } : {}), ...(Object.keys(patIds).length ? { patIds } : {}),
+    custom:false, src:'tcgdex', tdId:String(j.id), ...(cmIdOf(j) ? { cmId:cmIdOf(j) } : {}), ...(lang !== 'en' ? { lang } : {}), ...(variants.length ? { variants, vEv } : {}), ...(Object.keys(patIds).length ? { patIds } : {}), ...(Object.keys(patPx).length ? { patPx } : {}),
     ...(cm ? { price:{ td:tdPrice(cm), fetched:new Date().toISOString() } } : {}) };
 }
 /* Fetch full details for brief TCGdex cards, 8 at a time. */
@@ -1299,7 +1339,7 @@ async function tcgdexPrices(ids, onProgress, signal) {
       if (c.tdId) {
         const j = await tdJson(c.lang || 'en', `/cards/${encodeURIComponent(c.tdId)}`, signal), cm = j?.pricing?.cardmarket;
         if (j && cmIdOf(j)) c.cmId = cmIdOf(j);
-        if (j) { applyPrintings(c, printingsFromTd(j, c.release_date)); const pid = patternIdsFromTd(j); if (Object.keys(pid).length) c.patIds = pid; }
+        if (j) { applyPrintings(c, printingsFromTd(j, c.release_date)); const pid = patternIdsFromTd(j); if (Object.keys(pid).length) c.patIds = pid; const ppx = patternPricesFromTd(j); if (Object.keys(ppx).length) c.patPx = ppx; }
         if (cm) { c.price ||= {}; c.price.td = tdPrice(cm); c.price.fetched = c.price.td.fetched; got++; }
       }
     } catch (e) { if (e.name !== 'AbortError') tdFailed++; /* offline or TCGdex busy: keep what we have, and say so */ }
@@ -2326,10 +2366,13 @@ function sanitizeCard(k, c) {
   if (c.patIds && typeof c.patIds === 'object') { const pi = {}, n = x => Number.isInteger(+x) && +x > 0 && +x < 1e9 ? +x : null;
     for (const v of PATTERNS) { const x = c.patIds[v]; if (x && typeof x === 'object') pi[v] = { ...(n(x.cm) ? { cm:n(x.cm) } : {}), ...(n(x.tcp) ? { tcp:n(x.tcp) } : {}), own:!!x.own && !!n(x.cm), ownTcp:!!x.ownTcp && !!n(x.tcp) }; }
     if (Object.keys(pi).length) out.patIds = pi; }
+  if (c.patPx && typeof c.patPx === 'object') { const px = {}, n = x => +x > 0 && +x < 1e6 ? +x : null, d = x => /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : '';
+    for (const v of PATTERNS) { const x = c.patPx[v]; if (x && typeof x === 'object') { const r = { trendH:n(x.trendH), avg30H:n(x.avg30H), avg7H:n(x.avg7H), lowH:n(x.lowH), updated:d(x.updated), tcp:n(x.tcp), tcpUpd:d(x.tcpUpd) }; if (r.trendH || r.avg30H || r.avg7H || r.tcp) px[v] = r; } }
+    if (Object.keys(px).length) out.patPx = px; }
   if (c.pp && typeof c.pp === 'object') { const pp = {}; for (const v of PATTERNS) { const x = c.pp[v]; if (x && +x.gbp > 0 && +x.gbp < 1e6) pp[v] = { gbp:Math.round(+x.gbp * 100) / 100, at:str(x.at, 10), ...(x.usd > 0 && x.usd < 1e6 ? { usd:Math.round(+x.usd * 100) / 100 } : {}) }; } if (Object.keys(pp).length) out.pp = pp; }
   if (Array.isArray(c.vHide)) out.vHide = c.vHide.filter(v => V_ALL.includes(v));
   if (c.vEv && typeof c.vEv === 'object') { out.vEv = {}; const OK = ['TCGdex', 'TCGplayer', 'Cardmarket', 'Pokémon TCG API'];
-    for (const v of V_ORDER) if (Array.isArray(c.vEv[v])) { const s = c.vEv[v].filter(x => OK.includes(x)); if (s.length) out.vEv[v] = s; } }
+    for (const v of V_ALL) if (Array.isArray(c.vEv[v])) { const s = c.vEv[v].filter(x => OK.includes(x)); if (s.length) out.vEv[v] = s; } }
   const pr = c.price;
   if (pr && typeof pr === 'object') {
     const sp = q => q && typeof q === 'object' && q.value > 0 ? { value:+q.value, metric:str(q.metric, 60), low:numOr(q.low), avg30:numOr(q.avg30), rev:numOr(q.rev),

@@ -296,10 +296,10 @@ small{font-size:12px}
 .ttotal{display:flex;justify-content:space-between;font-weight:700;margin-top:10px;font-variant-numeric:tabular-nums}
 .verdict{border-radius:var(--r);padding:12px 14px;font-weight:650;background:var(--surface-2);text-align:center}
 .verdict.up{background:var(--ok-soft)} .verdict.down{background:color-mix(in srgb,var(--danger) 12%,transparent)}
-.ppv{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;align-items:center;margin-top:8px}
-.ppv .ppv-h{grid-column:1/-1}
-.ppv .inp{min-height:40px;font-size:16px;min-width:0}
-.ppv small{grid-column:1/-1}
+.ppv{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;margin-top:8px;min-width:0}
+.ppv .ppv-h,.ppv small{flex:1 1 100%;min-width:0;overflow-wrap:anywhere}
+.ppv .inp{flex:1 1 110px;min-width:110px;max-width:180px;min-height:40px;font-size:16px}
+.ppv .ppv-links{display:flex;gap:4px;flex-wrap:wrap}
 .ppv.compact{grid-column:1/-1}
 .picker{display:grid;gap:6px;max-height:280px;overflow:auto;margin-top:8px}
 /* basket / offer / trade lines: text on top, quantity underneath, price on the right */
