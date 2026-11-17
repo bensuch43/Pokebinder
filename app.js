@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.9.1',
+  version: '3.9.2',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -118,7 +118,7 @@ const blankState = () => ({ version:2, cards:{}, collections:{}, order:[], activ
    quantity, condition, price paid per copy in GBP, date paid). `owned` is a derived cache keyed by
    binder entry (card id, or "cardId|variant" in master-set mode) — see syncOwned(). */
 const newCollection = (name, opts={}) => ({ id:'c_' + uid(), name, cardIds:[], owned:{}, copies:{}, history:[],
-  layout: opts.layout || CONFIG.defaultLayout, sort: opts.sort || 'release', variantSlots: !!opts.variantSlots,
+  layout: opts.layout || CONFIG.defaultLayout, sort: opts.sort || 'release', variantSlots: !!opts.variantSlots, patternSlots: !!opts.patternSlots,
   setBreaks: !!opts.setBreaks, startRight: opts.startRight ?? true, created: Date.now(), updated: Date.now() });
 const active = () => S.collections[S.activeId] || null;
 
@@ -212,7 +212,8 @@ const cardIdOf = entryId => String(entryId).split('|')[0];
 const variantOfEntry = entryId => String(entryId).split('|')[1] || null;
 /* Printings for a card in this collection: what the price feeds say exists, plus anything you've logged. */
 function variantsOf(c, col) {
-  const hide = c.vHide || [], set = new Set((c.variants?.length ? c.variants : ['normal']).filter(v => !hide.includes(v)));
+  const hide = c.vHide || [], pats = !col || col.patternSlots;
+  const set = new Set((c.variants?.length ? c.variants : ['normal']).filter(v => !hide.includes(v) && (pats || !isPattern(v))));
   Object.keys(col?.copies?.[c.id] || {}).forEach(v => { if (v !== 'any' && VARIANTS[v]) set.add(v); });   // anything you've logged always shows
   if (!set.size) set.add((c.variants || []).find(v => !hide.includes(v)) || 'normal');
   return V_ALL.filter(v => set.has(v));
@@ -231,16 +232,30 @@ function printingsFromTd(j, released) {
   const ev = {}, add = (v, s) => { if (v) (ev[v] ||= new Set()).add(s); };
   let weakNormal = false;
   for (const d of Array.isArray(j?.variants_detailed) ? j.variants_detailed : []) {
-    const st = (d?.stamp || []).map(String);
-    const v = st.includes('1st-edition') ? 'first' : st.some(s => s !== 'set-logo') ? null : ({ normal:'normal', holo:'holo', reverse:'reverse' })[d?.type] || null;   // other stamps (staff, prerelease…) aren't printings here
+    const st = (d?.stamp || []).map(String), foil = String(d?.foil || '').toLowerCase();
+    const v = st.includes('1st-edition') ? 'first' : st.some(s => s !== 'set-logo') ? null : isPattern(foil) ? foil   // TCGdex marks patterns as foil: "pokeball" / "masterball"
+      : ({ normal:'normal', holo:'holo', reverse:'reverse' })[d?.type] || null;   // other stamps (staff, prerelease…) aren't printings here
     if (!v) continue;
     if (d.variantId === 'generated' && v === 'normal') weakNormal = true; else add(v, 'TCGdex');
   }
   for (const k of Object.keys(j?.pricing?.tcgplayer || {})) if (!['unit', 'updated'].includes(k)) add(tcpPrinting(k), 'TCGplayer');
   const cm = j?.pricing?.cardmarket;
-  if (cm && (cm['trend-holo'] > 0 || cm['avg30-holo'] > 0 || cm['low-holo'] > 0) && (released || '9999') >= '2002-05') add('reverse', 'Cardmarket');
+  // Cardmarket's foil column means "a reverse exists" — unless TCGdex says the only foils are patterns (Japanese 151 has no plain reverse)
+  const patOnly = (ev.pokeball || ev.masterball) && !ev.reverse;
+  if (!patOnly && cm && (cm['trend-holo'] > 0 || cm['avg30-holo'] > 0 || cm['low-holo'] > 0) && (released || '9999') >= '2002-05') add('reverse', 'Cardmarket');
   if (weakNormal && !Object.keys(ev).length) add('normal', 'TCGdex');
   return Object.fromEntries(Object.entries(ev).map(([v, s]) => [v, [...s]]));
+}
+/* Marketplace ids for each pattern from TCGdex. own = Cardmarket has a separate product for the pattern
+   (seen on Japanese 151); otherwise the pattern shares the plain card's listing and its figures aren't the pattern's. */
+function patternIdsFromTd(j) {
+  const vd = Array.isArray(j?.variants_detailed) ? j.variants_detailed : [], base = vd.find(d => !isPattern(String(d?.foil || '').toLowerCase()));
+  const id = x => { const n = Number(x); return Number.isInteger(n) && n > 0 && n < 1e9 ? n : null; };
+  const baseCm = id(base?.thirdParty?.cardmarket), baseTcp = id(base?.thirdParty?.tcgplayer), out = {};
+  for (const d of vd) { const f = String(d?.foil || '').toLowerCase(); if (!isPattern(f) || out[f]) continue;
+    const cm = id(d?.thirdParty?.cardmarket), tcp = id(d?.thirdParty?.tcgplayer);
+    out[f] = { ...(cm ? { cm } : {}), ...(tcp ? { tcp } : {}), own:!!(cm && cm !== baseCm), ownTcp:!!(tcp && tcp !== baseTcp) }; }
+  return out;
 }
 function applyPrintings(c, ev) {
   if (!c || !ev || !Object.keys(ev).length) return;
@@ -469,7 +484,7 @@ function patternValueHtml(id, v, compact) {
   const x = c.pp?.[v];
   return `<div class="ppv${compact ? ' compact' : ''}"><span class="small ppv-h">${esc(VARIANTS[v])} value <span class="muted">${compact ? '(£ or $)' : '(£, or $ from PriceCharting)'}</span></span>
     <input class="inp" data-ppv="${esc(id)}" data-v="${v}" inputmode="decimal" autocomplete="off" placeholder="e.g. 8.50" value="${x ? x.gbp.toFixed(2) : ''}" aria-label="${esc(VARIANTS[v])} value in pounds, or dollars with a $ sign">
-    <a class="btn sm ghost" href="${esc(pricechartingUrl(c, v))}" target="_blank" rel="noopener noreferrer">PriceCharting</a>
+    <span class="row" style="gap:4px;flex-wrap:nowrap"><a class="btn sm ghost" href="${esc(pricechartingUrl(c, v))}" target="_blank" rel="noopener noreferrer">PriceCharting</a>${patternCmUrl(c, v) ? `<a class="btn sm ghost" href="${esc(patternCmUrl(c, v))}" target="_blank" rel="noopener noreferrer">Cardmarket</a>` : ''}</span>
     ${x ? `<small class="muted">${x.usd ? `$${x.usd.toFixed(2)} → ` : ''}set ${esc(x.at)}</small>` : (compact ? '<small class="muted">No feed prices patterns — look it up.</small>' : '<small class="muted">No market feed prices this pattern — look it up and type the value.</small>')}</div>`;
 }
 document.addEventListener('change', e => {
@@ -557,6 +572,7 @@ const cardmarketUrl = (c, fallbackName) => c?.cmId > 0 ? `https://www.cardmarket
 /* Cardmarket product id from a TCGdex card: card-level, first variant that has one, or the price record. */
 const cmIdOf = j => [j?.thirdParty?.cardmarket, ...(j?.variants_detailed || []).map(v => v?.thirdParty?.cardmarket), j?.pricing?.cardmarket?.idProduct]
   .map(Number).find(n => Number.isInteger(n) && n > 0 && n < 1e9) || null;
+const patternCmUrl = (c, v) => c?.patIds?.[v]?.own ? `https://www.cardmarket.com/en/Pokemon/Products?idProduct=${c.patIds[v].cm}` : '';
 const tcgplayerUrl = c => c?.name ? `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(`${c.name} ${c.set_name || ''}`.trim())}` : '';
 const QUALITY = { good:'Good data', fallback:'Fallback figure', stale:'Stale price', manual:'Your value' };
 function qualityText(pi) {
@@ -987,7 +1003,7 @@ function openColDialog(mode) {
   $('#col-layout').value = isEdit ? col.layout : CONFIG.defaultLayout;
   $('#col-sort').value = isEdit ? col.sort : 'release';
   $('#col-setbreaks').checked = isEdit ? col.setBreaks : false;
-  $('#col-variants').checked = isEdit ? !!col.variantSlots : false;
+  $('#col-variants').checked = isEdit ? !!col.variantSlots : false; $('#col-patterns').checked = isEdit ? !!col.patternSlots : false;
   $('#col-startright').checked = isEdit ? col.startRight : true;
   $('#col-watch').value = isEdit ? col.watch?.artist || '' : '';
   $('#col-delete').classList.toggle('hidden', !isEdit);
@@ -997,7 +1013,7 @@ function openColDialog(mode) {
 $('#form-col').addEventListener('submit', e => {
   if (e.submitter?.value !== 'ok') return;
   const name = $('#col-name').value.trim(); if (!name) { e.preventDefault(); return; }
-  const opts = { layout:$('#col-layout').value, sort:$('#col-sort').value, setBreaks:$('#col-setbreaks').checked, startRight:$('#col-startright').checked, variantSlots:$('#col-variants').checked };
+  const opts = { layout:$('#col-layout').value, sort:$('#col-sort').value, setBreaks:$('#col-setbreaks').checked, startRight:$('#col-startright').checked, variantSlots:$('#col-variants').checked, patternSlots:$('#col-variants').checked && $('#col-patterns').checked };
   if (colMode === 'edit' && active()) {
     const was = active().variantSlots; Object.assign(active(), opts, { name, updated:Date.now() }); setWatch(active(), $('#col-watch').value); toast('Collection updated', 'success');
     const unknown = active().cardIds.filter(id => S.cards[id] && !S.cards[id].custom && !S.cards[id].vEv).length;
@@ -1204,14 +1220,14 @@ async function tdToCard(j, lang = 'en', signal) {
   let id = pt ? `${pt}-${num}` : lang === 'en' ? String(j.id) : `${lang}-${j.id}`;
   if (pt && S.cards[id] && normName(S.cards[id].name) !== normName(j.name)) { id = String(j.id); pt = null; }   // numbering differs: don't collide
   if (!ID_RE.test(id)) id = (lang === 'en' ? '' : lang + '-') + String(j.id).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 50);
-  const vEv = printingsFromTd(j, set?.rel), variants = V_ORDER.filter(k => vEv[k]);
+  const vEv = printingsFromTd(j, set?.rel), variants = V_ALL.filter(k => vEv[k]), patIds = patternIdsFromTd(j);
   const cat = String(j.category || ''), isMon = (j.dexId?.length > 0) || /^pok/i.test(cat);
   const img = safeUrl(j.image || ''), cm = j.pricing?.cardmarket;
   return { id, name:String(j.name || '?'), number:num, set_id:pt || (lang === 'en' ? setId : `${lang}-${setId}`), set_name:set?.name || String(j.set?.name || setId),
     series:(lang !== 'en' ? TD_LANGS[lang] + (set?.serie ? ' · ' : '') : '') + (set?.serie || ''), release_date:/^\d{4}-\d{2}-\d{2}$/.test(set?.rel) ? set.rel : '',
     artist:String(j.illustrator || ''), rarity:j.rarity && j.rarity !== 'None' ? String(j.rarity) : '', dex:j.dexId?.[0] ?? null,
     supertype:isMon ? 'Pokémon' : /trainer/i.test(cat) ? 'Trainer' : /energy/i.test(cat) ? 'Energy' : cat, img_s:img ? img + '/low.webp' : '', img_l:img ? img + '/high.webp' : '',
-    custom:false, src:'tcgdex', tdId:String(j.id), ...(cmIdOf(j) ? { cmId:cmIdOf(j) } : {}), ...(lang !== 'en' ? { lang } : {}), ...(variants.length ? { variants, vEv } : {}),
+    custom:false, src:'tcgdex', tdId:String(j.id), ...(cmIdOf(j) ? { cmId:cmIdOf(j) } : {}), ...(lang !== 'en' ? { lang } : {}), ...(variants.length ? { variants, vEv } : {}), ...(Object.keys(patIds).length ? { patIds } : {}),
     ...(cm ? { price:{ td:tdPrice(cm), fetched:new Date().toISOString() } } : {}) };
 }
 /* Fetch full details for brief TCGdex cards, 8 at a time. */
@@ -1283,7 +1299,7 @@ async function tcgdexPrices(ids, onProgress, signal) {
       if (c.tdId) {
         const j = await tdJson(c.lang || 'en', `/cards/${encodeURIComponent(c.tdId)}`, signal), cm = j?.pricing?.cardmarket;
         if (j && cmIdOf(j)) c.cmId = cmIdOf(j);
-        if (j) applyPrintings(c, printingsFromTd(j, c.release_date));
+        if (j) { applyPrintings(c, printingsFromTd(j, c.release_date)); const pid = patternIdsFromTd(j); if (Object.keys(pid).length) c.patIds = pid; }
         if (cm) { c.price ||= {}; c.price.td = tdPrice(cm); c.price.fetched = c.price.td.fetched; got++; }
       }
     } catch (e) { if (e.name !== 'AbortError') tdFailed++; /* offline or TCGdex busy: keep what we have, and say so */ }
@@ -1315,7 +1331,7 @@ async function runPatternCheck() {
   const out = $('#tdc-out'), status = $('#tdc-status'), go = $('#tdc-run');
   if (navigator.onLine === false) { status.textContent = 'You’re offline — connect and try again.'; return; }
   go.disabled = true; out.value = '';
-  const lines = [`PokéBinder ${CONFIG.version} · TCGdex pattern check · ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`], allHits = [];
+  const lines = [`PokéBinder ${CONFIG.version} · TCGdex pattern check v2 · ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`], allHits = [];
   let cardsSeen = 0, withDetailed = 0;
   for (const t of PATTERN_PROBE) {
     status.textContent = `Checking ${t.label}…`;
@@ -1323,19 +1339,19 @@ async function runPatternCheck() {
       const set = (await tdSetsList(t.lang)).find(t.test);
       if (!set) { lines.push('', `## ${t.label}: set not found on TCGdex (${t.lang})`); continue; }
       const full = await tdJson(t.lang, `/sets/${encodeURIComponent(set.id)}`);
-      const briefs = (full?.cards || []).slice(0, 3);
+      const briefs = (full?.cards || []).slice(0, 2);
       lines.push('', `## ${t.label} → ${t.lang}/${set.id} · ${full?.cards?.length ?? '?'} cards listed`);
       for (const b of briefs) {
         const j = await tdJson(t.lang, `/cards/${encodeURIComponent(b.id)}`); cardsSeen++;
         if (!j) { lines.push(`- ${b.id}: no card data`); continue; }
         const vd = Array.isArray(j.variants_detailed) ? j.variants_detailed : null; if (vd) withDetailed++;
         const hits = patternHits(j); allHits.push(...hits.map(h => `${b.id}: ${h}`));
+        const pid = patternIdsFromTd(j);
         lines.push(`- ${b.id} ${j.name} (${j.rarity || 'no rarity'})`,
-          `  variants: ${JSON.stringify(j.variants || null)}`,
-          `  variants_detailed: ${vd ? JSON.stringify(vd).slice(0, 700) : 'not present'}`,
-          `  cardmarket keys: ${Object.keys(j.pricing?.cardmarket || {}).join(', ') || 'none'}`,
-          `  tcgplayer keys: ${Object.keys(j.pricing?.tcgplayer || {}).join(', ') || 'none'}`,
-          `  pattern mentions: ${hits.length ? hits.join(' | ') : 'none'}`);
+          `  versions: ${vd ? vd.map(d => `${d.type}${d.foil ? '/' + d.foil : ''}${(d.stamp || []).length ? '+' + d.stamp.join('+') : ''} cm=${d.thirdParty?.cardmarket ?? '-'} tcp=${d.thirdParty?.tcgplayer ?? '-'}`).join(' | ') : 'no detailed list'}`,
+          `  app reads: ${Object.entries(printingsFromTd(j, '')).map(([v, s2]) => `${v}(${s2.join('+')})`).join(', ') || 'nothing'}${Object.keys(pid).length ? ' · ' + Object.entries(pid).map(([v, x]) => `${v}: Cardmarket ${x.own ? 'own product' : 'shared with plain card'}, TCGplayer ${x.ownTcp ? 'own product' : x.tcp ? 'shared' : 'none'}`).join(' · ') : ''}`);
+        for (const d of (vd || []).filter(d => isPattern(String(d?.foil || '').toLowerCase())))
+          lines.push(`  ${d.foil} prices: ${JSON.stringify(d.pricing || null).slice(0, 1600)}`);
       }
     } catch (e) { lines.push('', `## ${t.label}: error — ${e.message}`); }
   }
@@ -2307,6 +2323,9 @@ function sanitizeCard(k, c) {
   if (/^\d{1,3}$/.test(c.level || '')) out.level = c.level; if (c.lvChecked) out.lvChecked = true;
   if (Number.isInteger(c.cmId) && c.cmId > 0 && c.cmId < 1e9) out.cmId = c.cmId;
   if (Array.isArray(c.variants)) out.variants = c.variants.filter(v => V_ALL.includes(v));
+  if (c.patIds && typeof c.patIds === 'object') { const pi = {}, n = x => Number.isInteger(+x) && +x > 0 && +x < 1e9 ? +x : null;
+    for (const v of PATTERNS) { const x = c.patIds[v]; if (x && typeof x === 'object') pi[v] = { ...(n(x.cm) ? { cm:n(x.cm) } : {}), ...(n(x.tcp) ? { tcp:n(x.tcp) } : {}), own:!!x.own && !!n(x.cm), ownTcp:!!x.ownTcp && !!n(x.tcp) }; }
+    if (Object.keys(pi).length) out.patIds = pi; }
   if (c.pp && typeof c.pp === 'object') { const pp = {}; for (const v of PATTERNS) { const x = c.pp[v]; if (x && +x.gbp > 0 && +x.gbp < 1e6) pp[v] = { gbp:Math.round(+x.gbp * 100) / 100, at:str(x.at, 10), ...(x.usd > 0 && x.usd < 1e6 ? { usd:Math.round(+x.usd * 100) / 100 } : {}) }; } if (Object.keys(pp).length) out.pp = pp; }
   if (Array.isArray(c.vHide)) out.vHide = c.vHide.filter(v => V_ALL.includes(v));
   if (c.vEv && typeof c.vEv === 'object') { out.vEv = {}; const OK = ['TCGdex', 'TCGplayer', 'Cardmarket', 'Pokémon TCG API'];
@@ -2332,7 +2351,7 @@ function sanitizeState(st) {
   for (const [id, c] of Object.entries(st.collections || {})) {
     if (!c || typeof c !== 'object' || !/^c_[a-z0-9]{1,30}$/.test(id) || c.id !== id) continue;
     const col = newCollection(str(c.name, 80) || 'Restored collection', { layout:LAYOUTS[c.layout] ? c.layout : undefined, sort:SORTS[c.sort] ? c.sort : undefined,
-      setBreaks:!!c.setBreaks, startRight:c.startRight !== false, variantSlots:!!c.variantSlots });
+      setBreaks:!!c.setBreaks, startRight:c.startRight !== false, variantSlots:!!c.variantSlots, patternSlots:!!c.patternSlots });
     col.id = id; col.created = numOr(c.created, Date.now()); col.updated = numOr(c.updated, Date.now());
     col.cardIds = [...new Set((Array.isArray(c.cardIds) ? c.cardIds : []).filter(x => typeof x === 'string' && cards[x]))];
     const copies = c.copies && typeof c.copies === 'object' ? c.copies : Object.fromEntries(Object.keys(c.owned || {}).filter(x => cards[x]).map(x => [x, { any:{ q:1 } }]));   // pre-2.4 backups

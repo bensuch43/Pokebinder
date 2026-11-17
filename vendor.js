@@ -60,7 +60,11 @@ const mktBadge = (cardId, v) => { const pi = priceOf(S.cards[cardId], v); return
 const lotMarket = l => mktFor(l.cardId, l.v, langOf(l));
 /* Versions offered on the vendor screens: what exists for the card, plus Poké Ball / Master Ball on Scarlet & Violet-era
    cards — at a table you need to log a pattern you haven't seen before without a trip to the binder. */
-const vendorVariants = c => { const vs = variantsOf(c); if (patternEra(c)) PATTERNS.forEach(p => { if (!vs.includes(p)) vs.push(p); }); return vs; };
+const vendorVariants = c => { const vs = variantsOf(c);
+  // TCGdex now lists patterns: trust it when it has printing data for the card; otherwise offer both on Scarlet & Violet-era cards
+  const known = Object.values(c?.vEv || {}).some(s => Array.isArray(s) && s.includes('TCGdex'));
+  if (!known && patternEra(c)) PATTERNS.forEach(p => { if (!vs.includes(p)) vs.push(p); });
+  return vs; };
 const lotAsk = l => l.price > 0 ? l.price : rulePrice({ id:l.cardId, v:l.v, lang:langOf(l) });
 function buyOffer(cardId, v, lang) {
   const m = mktFor(cardId, v, lang); if (m == null) return null;
