@@ -134,6 +134,35 @@ function attentionHtml() {
     ${n ? '' : '<p class="small muted" style="margin:6px 0 0">Nothing to do. Stock is checked against your sticker rule and the last price you printed.</p>'}</details>`;
 }
 
+/* ---------- clear vendor data (collections untouched) ---------- */
+function openVendorClear() {
+  initVendorState();
+  const V = S.vendor, lots = Object.keys(S.stock).length, copies = Object.values(S.stock).reduce((n, l) => n + l.q, 0), txns = S.ledger.length;
+  const open = V.basket.length + V.buy.length + V.give.length + V.get.length;
+  const opt = (k, label, sub, on, n) => `<label class="chk"><input type="checkbox" data-vc="${k}"${on && n ? ' checked' : ''}${n ? '' : ' disabled'}><span>${label}<small class="muted">${sub}</small></span></label>`;
+  $('#vc-body').innerHTML = `<p class="small" style="margin:0 0 8px">Your collections, binders and the cards in them are <b>not</b> affected.</p>
+    ${opt('stock', `Stock for sale <b>(${lots} card${lots === 1 ? '' : 's'}, ${copies} cop${copies === 1 ? 'y' : 'ies'})</b>`, 'Removes everything from Stock. Nothing is recorded as sold.', true, lots)}
+    ${opt('ledger', `Sales &amp; purchases ledger <b>(${txns} entr${txns === 1 ? 'y' : 'ies'})</b>`, 'Deletes the history behind takings and profit. Download the ledger CSV first if you need it for your records.', false, txns)}
+    ${opt('open', `Open sale, purchase and trade lists <b>(${open} line${open === 1 ? '' : 's'})</b>`, 'Clears anything part-way through on the Sell, Buy and Trade tabs.', true, open)}
+    ${opt('settings', 'Vendor settings', 'Resets buying %, rounding, language price adjustments and the stale-stock thresholds to their defaults. Your sticker rule is kept.', false, 1)}
+    <p class="small muted" style="margin:8px 0 0">You can undo straight after clearing.</p>`;
+  vcUpdate(); $('#dlg-vclear').showModal();
+}
+function vcUpdate() { $('#vc-go').disabled = !$$('[data-vc]:checked').length; }
+function doVendorClear() {
+  const pick = new Set($$('[data-vc]:checked').map(x => x.dataset.vc)); if (!pick.size) return;
+  const snap = snapshot(), V = S.vendor, done = [];
+  if (pick.has('stock')) { S.stock = {}; V.basket = []; V.give = []; done.push('stock'); }
+  if (pick.has('ledger')) { S.ledger = []; done.push('ledger'); }
+  if (pick.has('open')) { V.basket = []; V.buy = []; V.give = []; V.get = []; V.total = null; done.push('open lists'); }
+  if (pick.has('settings')) { const keep = { vtab:V.vtab, basket:V.basket, buy:V.buy, give:V.give, get:V.get, total:V.total, range:V.range, sort:V.sort };
+    S.vendor = keep; initVendorState(); done.push('vendor settings'); }
+  $('#dlg-vclear').close(); save(); render();
+  undoable(`Cleared ${done.join(', ')}`, snap);
+}
+document.addEventListener('change', e => { if (e.target.dataset?.vc) vcUpdate(); });
+$('#vc-go').addEventListener('click', doVendorClear);
+
 /* ---------- prices: online first, fall back to what's saved ---------- */
 async function freshen(ids) {
   const want = [...new Set(ids)].filter(id => { const c = S.cards[id]; return c && !c.custom; });
@@ -236,6 +265,7 @@ function stockHtml() {
         <button class="btn sm" data-act="labels">${ic('sticker', 'sm')}Price stickers</button>
         <button class="btn sm" data-act="share-trade"${Object.keys(S.stock).length ? '' : ' disabled'}>${ic('share', 'sm')}Share</button>
         <button class="btn sm" data-vact="stock-csv"${Object.keys(S.stock).length ? '' : ' disabled'}>${ic('download', 'sm')}CSV</button>
+        <button class="btn sm ghost" data-act="vclear">Clear vendor data…</button>
       </div></div>
     ${V.adding ? `<div style="margin-top:12px;padding:12px;border:1px dashed var(--line-2);border-radius:var(--r)"><b class="small">Add cards to stock</b> <span class="small muted">— search by name or printed code, then set quantity, condition and cost.</span><div style="margin-top:8px">${finderHtml('add', 'Card name or code, e.g. PBL 42')}</div></div>` : ''}
     ${langPanelHtml()}

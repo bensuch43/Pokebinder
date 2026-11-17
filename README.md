@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.8.1
+# PokéBinder Studio v3.8.2
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,15 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## v3.8.2: clear vendor data on its own
+- **Clear vendor data…** is in Vendor → Stock and in Settings → Storage. Tick what to clear:
+  - **Stock for sale** (ticked by default). Removes every lot. Nothing is recorded as sold.
+  - **Sales & purchases ledger** (unticked by default). Download the ledger CSV first if you need it for your records.
+  - **Open sale, purchase and trade lists** (ticked by default).
+  - **Vendor settings** (unticked by default). Resets buy %, rounding, language adjustments and the stale-stock thresholds. Your sticker rule is kept.
+- Collections, binders and card data are never touched. Undo is available straight after clearing.
+- Fix: the vendor screen was 30px wider than an iPhone because the tab strip and the online note didn't fit, so the page drifted sideways. The tab strip now scrolls on its own and the page stays at screen width.
 
 ## v3.8.1: wants lists of up to 50 cards
 

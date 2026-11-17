@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.8.1',
+  version: '3.8.2',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -2960,6 +2960,7 @@ document.addEventListener('click', e => {
         .catch(e => toast(`Couldn't check TCGdex (${e.message})`, 'warn')).finally(() => { t.disabled = false; }); break; }
     case 'complete-jp': completeLookupJp(); break;
     case 'cm-send': openCmSend(); break;
+    case 'vclear': if ($('#dlg-settings').open) $('#dlg-settings').close(); openVendorClear(); break;
     case 'rp-scan': { const col = active(); UI.reprints = { colId:col.id, busy:true }; UI.reprintsOpen = true; renderView();
       findReprints(col, (k, t2) => { const el = $('#rp-prog'); if (el) el.textContent = `Comparing card text… ${k} / ${t2}`; })
         .then(res => { UI.reprints = { colId:col.id, ...res, pick:new Set(res.same.flatMap((g, i) => g.drop.map((_, k) => `${i}:${k}`))) }; })

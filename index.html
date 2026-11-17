@@ -269,7 +269,10 @@ small{font-size:12px}
 .stale{color:var(--warn)}
 
 /* ---- overview ---- */
-.ov{display:grid;gap:16px}
+.ov{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
+.ov>.row>.tabs{max-width:100%;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.ov>.row>.tabs::-webkit-scrollbar{display:none}
+.ov>.row>.tabs button{white-space:nowrap;flex:none}
 .chart{width:100%;height:auto;display:block}
 .chart .grid line{stroke:var(--line)} .chart text{fill:var(--text-3);font-size:12px;font-family:var(--font)}
 .chart .l-own{stroke:var(--accent);stroke-width:2.25;fill:none} .chart .a-own{fill:url(#g-own);stroke:none}
@@ -812,6 +815,7 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
       <div class="row" style="margin-top:10px">
         <button class="btn sm" id="st-persist">Ask browser to keep data</button>
         <button class="btn sm" id="st-prune">Clear caches and unused cards</button>
+        <button class="btn sm" data-act="vclear">Clear vendor data…</button>
         <button class="btn sm danger" id="st-reset">Reset everything</button>
       </div>
     </fieldset>
@@ -899,6 +903,11 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
   <div class="dlg-f"><button class="btn danger hidden" id="lot-del"><svg class="i sm"><use href="#i-trash"/></svg>Remove</button><span style="flex:1"></span><button class="btn" id="lot-sell"><svg class="i sm"><use href="#i-plus"/></svg>Sell</button><button class="btn primary" id="lot-save">Save</button></div>
 </div></dialog>
 
+<dialog id="dlg-vclear"><div class="dlg">
+  <div class="dlg-h"><h3>Clear vendor data</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <div class="dlg-b" id="vc-body"></div>
+  <div class="dlg-f"><button class="btn" data-close>Cancel</button><button class="btn danger" id="vc-go">Clear selected</button></div>
+</div></dialog>
 <dialog id="dlg-cmtest"><div class="dlg">
   <div class="dlg-h"><h3 id="cmt-title">Send to Cardmarket</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
   <div class="dlg-b" id="cmt-body"></div>
