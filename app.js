@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.8.2',
+  version: '3.9.1',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -61,8 +61,20 @@ const ic = (name, cls = '') => `<svg class="i${cls ? ' ' + cls : ''}" aria-hidde
 /* Only ever put https:// URLs into href/src — data from APIs, backups or share links is untrusted. */
 const safeUrl = u => { try { const x = new URL(String(u || '')); return x.protocol === 'https:' ? x.href : ''; } catch { return ''; } };
 const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-const VARIANTS = { normal:'Normal', holo:'Holo', reverse:'Reverse holo', first:'1st edition', any:'Unspecified' };
-const VSHORT = { normal:'', holo:'Holo', reverse:'Rev', first:'1st', any:'' };
+const VARIANTS = { normal:'Normal', holo:'Holo', reverse:'Reverse holo', first:'1st edition', pokeball:'Poké Ball', masterball:'Master Ball', any:'Unspecified' };
+const VSHORT = { normal:'', holo:'Holo', reverse:'Rev', first:'1st', pokeball:'PB', masterball:'MB', any:'' };
+/* Poké Ball / Master Ball reverse-holo patterns (Prismatic Evolutions, Black Bolt / White Flare, Japanese 151 …).
+   No free feed prices them separately — TCGdex's Cardmarket figures are one "foil" price for every reverse —
+   so they are never given a borrowed price: you set a value (typed in £, or $ straight from PriceCharting). */
+const PATTERNS = ['pokeball', 'masterball'];
+const isPattern = v => PATTERNS.includes(v);
+const V_ALL = ['normal', 'holo', 'reverse', 'first', ...PATTERNS];
+const patternEra = c => !!c && !c.custom && (c.release_date || '') >= '2023-01-01';   // patterns are a Scarlet & Violet-era thing
+/* PriceCharting lists these as separate products ("Musharna [Master Ball] #36"); its search jumps straight to the product. */
+function pricechartingUrl(c, v) {
+  const q = [c?.name || '', v && v !== 'normal' && v !== 'any' ? ({ pokeball:'Poke Ball', masterball:'Master Ball', reverse:'Reverse Holo', first:'1st Edition', holo:'' })[v] : '', c?.lang === 'ja' ? 'Japanese' : '', String(c?.number || '').replace(/^0+(?=\d)/, '')].filter(Boolean).join(' ');
+  return 'https://www.pricecharting.com/search-products?type=prices&q=' + encodeURIComponent(q);
+}
 const CONDITIONS = ['NM', 'LP', 'MP', 'HP', 'DMG'];
 
 /* ---------- storage: IndexedDB with localStorage fallback ---------- */
@@ -203,7 +215,7 @@ function variantsOf(c, col) {
   const hide = c.vHide || [], set = new Set((c.variants?.length ? c.variants : ['normal']).filter(v => !hide.includes(v)));
   Object.keys(col?.copies?.[c.id] || {}).forEach(v => { if (v !== 'any' && VARIANTS[v]) set.add(v); });   // anything you've logged always shows
   if (!set.size) set.add((c.variants || []).find(v => !hide.includes(v)) || 'normal');
-  return ['normal','holo','reverse','first'].filter(v => set.has(v));
+  return V_ALL.filter(v => set.has(v));
 }
 /* ---------- which printings exist ----------
    No single source is complete (about a third of TCGdex's English cards have no printing data), so a printing counts
@@ -234,7 +246,7 @@ function applyPrintings(c, ev) {
   if (!c || !ev || !Object.keys(ev).length) return;
   c.vEv ||= {};
   for (const [v, srcs] of Object.entries(ev)) c.vEv[v] = [...new Set([...(c.vEv[v] || []), ...srcs])];
-  c.variants = V_ORDER.filter(v => c.vEv[v] || c.variants?.includes(v));
+  c.variants = V_ALL.filter(v => c.vEv[v] || c.variants?.includes(v));
 }
 const primaryVariant = (c, col) => variantsOf(c, col)[0];
 const qtyOf = (col, cardId, v) => col.copies?.[cardId]?.[v]?.q || 0;
@@ -378,7 +390,7 @@ function renderFilterOptions(col) {
 
 /* ---------- prices ---------- */
 const GBP = new Intl.NumberFormat('en-GB', { style:'currency', currency:'GBP' });
-const NATIVE = { EUR:new Intl.NumberFormat('en-GB', { style:'currency', currency:'EUR' }), USD:new Intl.NumberFormat('en-GB', { style:'currency', currency:'USD' }) };
+const NATIVE = { GBP:new Intl.NumberFormat('en-GB', { style:'currency', currency:'GBP' }), EUR:new Intl.NumberFormat('en-GB', { style:'currency', currency:'EUR' }), USD:new Intl.NumberFormat('en-GB', { style:'currency', currency:'USD' }) };
 function fxRate(cur) {
   const m = parseFloat(S.settings.fx?.[cur]); if (m > 0) return m;
   if (!S.fx) return null;
@@ -434,8 +446,41 @@ function pickCardmarket(c, variant) {
   if (!hit) { hit = best(figs.filter(f => f.fig === want)) || FIG_FALLBACK.map(f => best(figs.filter(x => x.fig === f))).find(Boolean) || best(figs); status = 'stale'; }
   return { hit, status, want };
 }
+/* Your value for a Poké Ball / Master Ball pattern, or null (never the plain reverse-holo price). */
+function patternPrice(c, v) {
+  const x = c?.pp?.[v]; if (!(x?.gbp > 0)) return null;
+  return { gbp:x.gbp, native:x.gbp, cur:'GBP', src:x.usd ? `your value (PriceCharting $${x.usd.toFixed(2)})` : 'your value', metric:'value you set', fig:'manual', want:'manual',
+    date:x.at || '', url:pricechartingUrl(c, v), fetched:x.at || '', status:'manual', stale:false, fallback:false, trend:null };
+}
+/* Set (or clear) your value for a pattern. Accepts "8.50", "£8.50" or "$11.06" (converted at the current $ rate). */
+function setPatternValue(id, v, raw) {
+  const c = S.cards[id]; if (!c || !isPattern(v)) return false;
+  const t = String(raw || '').trim().replace(/,/g, '');
+  if (!t) { if (c.pp) delete c.pp[v]; save(); return true; }
+  const usd = /^(\$|us\$|usd)/i.test(t) || /usd$/i.test(t), n = parseFloat(t.replace(/[^0-9.]/g, ''));
+  if (!(n > 0 && n < 1e6)) { toast('Type a value like 8.50 or $11.06', 'warn'); return false; }
+  let gbp = n;
+  if (usd) { const r = fxRate('USD'); if (!r) { toast('No $ exchange rate yet — type the value in £, or go online once', 'warn'); return false; } gbp = n * r; }
+  (c.pp ||= {})[v] = { gbp:Math.round(gbp * 100) / 100, at:today(), ...(usd ? { usd:Math.round(n * 100) / 100 } : {}) };
+  save(); return true;
+}
+function patternValueHtml(id, v, compact) {
+  const c = S.cards[id]; if (!c || !isPattern(v)) return '';
+  const x = c.pp?.[v];
+  return `<div class="ppv${compact ? ' compact' : ''}"><span class="small ppv-h">${esc(VARIANTS[v])} value <span class="muted">${compact ? '(£ or $)' : '(£, or $ from PriceCharting)'}</span></span>
+    <input class="inp" data-ppv="${esc(id)}" data-v="${v}" inputmode="decimal" autocomplete="off" placeholder="e.g. 8.50" value="${x ? x.gbp.toFixed(2) : ''}" aria-label="${esc(VARIANTS[v])} value in pounds, or dollars with a $ sign">
+    <a class="btn sm ghost" href="${esc(pricechartingUrl(c, v))}" target="_blank" rel="noopener noreferrer">PriceCharting</a>
+    ${x ? `<small class="muted">${x.usd ? `$${x.usd.toFixed(2)} → ` : ''}set ${esc(x.at)}</small>` : (compact ? '<small class="muted">No feed prices patterns — look it up.</small>' : '<small class="muted">No market feed prices this pattern — look it up and type the value.</small>')}</div>`;
+}
+document.addEventListener('change', e => {
+  const el = e.target; if (!el?.dataset?.ppv) return;
+  if (!setPatternValue(el.dataset.ppv, el.dataset.v, el.value)) return;
+  toast(el.value.trim() ? `${VARIANTS[el.dataset.v]} value saved` : `${VARIANTS[el.dataset.v]} value cleared`, 'success');
+  render(); if ($('#dlg-info')?.open && UI.infoId) openInfo(UI.infoId); if ($('#dlg-lot')?.open && typeof lotMarketNote === 'function') lotMarketNote();
+});
 /* Price for a card, or for one printing of it (entries carry .variant; or pass one explicitly). */
 function priceOf(c, variant = c?.variant) {
+  if (isPattern(variant)) return patternPrice(c, variant);
   const pr = c?.price; if (!pr) return null;
   const pref = S.settings.priceSource || CONFIG.priceSource;
   if (pref !== 'tcgplayer' && (pr.cm || pr.td)) {
@@ -513,9 +558,10 @@ const cardmarketUrl = (c, fallbackName) => c?.cmId > 0 ? `https://www.cardmarket
 const cmIdOf = j => [j?.thirdParty?.cardmarket, ...(j?.variants_detailed || []).map(v => v?.thirdParty?.cardmarket), j?.pricing?.cardmarket?.idProduct]
   .map(Number).find(n => Number.isInteger(n) && n > 0 && n < 1e9) || null;
 const tcgplayerUrl = c => c?.name ? `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(`${c.name} ${c.set_name || ''}`.trim())}` : '';
-const QUALITY = { good:'Good data', fallback:'Fallback figure', stale:'Stale price' };
+const QUALITY = { good:'Good data', fallback:'Fallback figure', stale:'Stale price', manual:'Your value' };
 function qualityText(pi) {
   if (!pi) return 'No price available';
+  if (pi.status === 'manual') return `Your value${pi.date ? ', set ' + pi.date : ''} — ${pi.src}`;
   const base = `${pi.metric} · ${pi.src} · price date ${pi.date || 'unknown'}`;
   return pi.status === 'good' ? `Good data: ${base}` : pi.status === 'fallback' ? `Fallback: ${pi.want ? PRICE_FIG[pi.want] + ' not available or out of date, using ' : ''}${base}` : `Stale: ${base} — older than ${CONFIG.priceStaleDays} days`;
 }
@@ -996,7 +1042,7 @@ function openInfo(entryId) {
   const img = safeUrl(c.img_l || c.img_s);
   const rec = col.copies?.[id] || {};
   const vlist = [...variantsOf(c, col), ...(rec.any ? ['any'] : [])];
-  const addable = ['normal','holo','reverse','first'].filter(v => !vlist.includes(v));
+  const addable = V_ALL.filter(v => !vlist.includes(v));
   const t = ownedTotals(col, [id]), spares = sparesOf(col, c);
   $('#i-title').textContent = dispName(entry);
   $('#i-body').innerHTML = `<div class="info-grid">
@@ -1027,9 +1073,9 @@ function openInfo(entryId) {
             <input class="inp" data-f="p" inputmode="decimal" placeholder="Paid £ each" aria-label="${VARIANTS[v]} price paid per copy (£)" value="${r.p ? esc(r.p) : ''}">
             <input class="inp date" data-f="d" type="date" aria-label="${VARIANTS[v]} date paid" value="${esc(r.d || '')}">
             ${c.lang ? '' : `<select class="inp" data-f="l" aria-label="${VARIANTS[v]} language">${Object.entries(LANGS).map(([k, n]) => `<option value="${k}"${(r.l || 'en') === k ? ' selected' : ''}>${n}</option>`).join('')}</select>`}
-          </div>${r.q > 0 && r.l && r.l !== 'en' ? `<p class="small muted lang-note">${r.l === 'ja' ? (bestJp(c) ? `${LANGS.ja} copy — counts for this slot, valued at the matching Japanese print (${esc(bestJp(c).c.set_name)} ${esc(bestJp(c).c.number)}, ${GBP.format(bestJp(c).pi.gbp)}).` : `${LANGS.ja} copy — counts for this slot. No matching Japanese print found yet, so it's valued at the English price.`) : `${esc(LANGS[r.l])} copy — counts for this slot, valued at the card's Cardmarket price (Cardmarket doesn't split prices by language).`}</p>` : ''}</div>`; }).join('')}
+          </div>${isPattern(v) ? patternValueHtml(id, v, true) : ''}${r.q > 0 && r.l && r.l !== 'en' ? `<p class="small muted lang-note">${r.l === 'ja' ? (bestJp(c) ? `${LANGS.ja} copy — counts for this slot, valued at the matching Japanese print (${esc(bestJp(c).c.set_name)} ${esc(bestJp(c).c.number)}, ${GBP.format(bestJp(c).pi.gbp)}).` : `${LANGS.ja} copy — counts for this slot. No matching Japanese print found yet, so it's valued at the English price.`) : `${esc(LANGS[r.l])} copy — counts for this slot, valued at the card's Cardmarket price (Cardmarket doesn't split prices by language).`}</p>` : ''}</div>`; }).join('')}
       ${c.custom ? '' : `<div class="printings small"><b>Printings that exist</b>
-        <ul>${V_ORDER.filter(v => c.variants?.includes(v) || c.vEv?.[v] || c.vHide?.includes(v)).map(v => { const hidden = c.vHide?.includes(v), srcs = c.vEv?.[v] || [], held = rec[v]?.q > 0;
+        <ul>${V_ALL.filter(v => c.variants?.includes(v) || c.vEv?.[v] || c.vHide?.includes(v)).map(v => { const hidden = c.vHide?.includes(v), srcs = c.vEv?.[v] || [], held = rec[v]?.q > 0;
           return `<li${hidden ? ' class="off"' : ''}><span><b>${VARIANTS[v]}</b> <span class="muted">${hidden ? 'hidden by you' : srcs.length ? 'per ' + esc(srcs.join(', ')) : 'listed'}</span></span>${held ? '<span class="muted">you have copies</span>' : `<button type="button" class="btn sm ghost" data-pv="${v}">${hidden ? 'Restore' : 'Not a real printing'}</button>`}</li>`; }).join('') || '<li class="muted">Not known yet — refresh this price to check.</li>'}</ul></div>`}
       ${addable.length ? `<div class="row"><select id="i-addv" class="inp" style="flex:1" aria-label="Add a printing">${addable.map(v => `<option value="${v}">${VARIANTS[v]}</option>`).join('')}</select><button class="btn sm" id="i-addv-go">${ic('plus', 'sm')}Add printing</button></div>` : ''}
     </section>
@@ -1084,6 +1130,7 @@ $('#i-remove').addEventListener('click', () => {
 
 function priceBoxHtml(c, variant) {
   if (c.custom) return '';
+  if (isPattern(variant)) return `<div class="pricebox">${patternValueHtml(c.id, variant)}</div>`;
   const pi = priceOf(c, variant), pr = c.price || {};
   if (!pi) return `<div class="pricebox"><span class="muted">No price in the API for this card.</span><button class="btn sm" data-act="refresh-one" style="justify-self:start">${ic('refresh', 'sm')}Check again</button></div>`;
   const r = fxRate('EUR'), eur = v => `${NATIVE.EUR.format(v)}${r ? `<span class="gbp">≈ ${GBP.format(v * r)}</span>` : ''}`;
@@ -1247,6 +1294,63 @@ async function tcgdexPrices(ids, onProgress, signal) {
   return got;
 }
 
+/* ---------- diagnostic: does TCGdex know about Poké Ball / Master Ball patterns yet? ----------
+   Pulls a few cards from the sets that have patterns and reports exactly what TCGdex returns, so the answer
+   comes from the live data rather than guesswork. Read-only: nothing is saved apart from the usual set-list cache. */
+const PATTERN_PROBE = [
+  { lang:'en', label:'Prismatic Evolutions', test:s => /prismatic evolutions/i.test(s.name) },
+  { lang:'en', label:'Black Bolt', test:s => /black bolt/i.test(s.name) },
+  { lang:'en', label:'White Flare', test:s => /white flare/i.test(s.name) },
+  { lang:'ja', label:'Japanese 151 (SV2a)', test:s => /^sv2a$/i.test(s.id) }
+];
+function patternHits(obj, path = '', out = []) {
+  const RX = /pok[eé]\s?-?ball|master\s?-?ball/i;
+  if (out.length > 40 || obj == null) return out;
+  if (typeof obj === 'string') { if (RX.test(obj)) out.push(`${path} = "${obj.slice(0, 60)}"`); return out; }
+  if (typeof obj !== 'object') return out;
+  for (const [k, v] of Object.entries(obj)) { const pth = path ? `${path}.${k}` : k; if (RX.test(k)) out.push(`${pth} (key)`); patternHits(v, pth, out); }
+  return out;
+}
+async function runPatternCheck() {
+  const out = $('#tdc-out'), status = $('#tdc-status'), go = $('#tdc-run');
+  if (navigator.onLine === false) { status.textContent = 'You’re offline — connect and try again.'; return; }
+  go.disabled = true; out.value = '';
+  const lines = [`PokéBinder ${CONFIG.version} · TCGdex pattern check · ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`], allHits = [];
+  let cardsSeen = 0, withDetailed = 0;
+  for (const t of PATTERN_PROBE) {
+    status.textContent = `Checking ${t.label}…`;
+    try {
+      const set = (await tdSetsList(t.lang)).find(t.test);
+      if (!set) { lines.push('', `## ${t.label}: set not found on TCGdex (${t.lang})`); continue; }
+      const full = await tdJson(t.lang, `/sets/${encodeURIComponent(set.id)}`);
+      const briefs = (full?.cards || []).slice(0, 3);
+      lines.push('', `## ${t.label} → ${t.lang}/${set.id} · ${full?.cards?.length ?? '?'} cards listed`);
+      for (const b of briefs) {
+        const j = await tdJson(t.lang, `/cards/${encodeURIComponent(b.id)}`); cardsSeen++;
+        if (!j) { lines.push(`- ${b.id}: no card data`); continue; }
+        const vd = Array.isArray(j.variants_detailed) ? j.variants_detailed : null; if (vd) withDetailed++;
+        const hits = patternHits(j); allHits.push(...hits.map(h => `${b.id}: ${h}`));
+        lines.push(`- ${b.id} ${j.name} (${j.rarity || 'no rarity'})`,
+          `  variants: ${JSON.stringify(j.variants || null)}`,
+          `  variants_detailed: ${vd ? JSON.stringify(vd).slice(0, 700) : 'not present'}`,
+          `  cardmarket keys: ${Object.keys(j.pricing?.cardmarket || {}).join(', ') || 'none'}`,
+          `  tcgplayer keys: ${Object.keys(j.pricing?.tcgplayer || {}).join(', ') || 'none'}`,
+          `  pattern mentions: ${hits.length ? hits.join(' | ') : 'none'}`);
+      }
+    } catch (e) { lines.push('', `## ${t.label}: error — ${e.message}`); }
+  }
+  const verdict = allHits.length ? `YES — TCGdex mentions patterns (${allHits.length} place${allHits.length === 1 ? '' : 's'}). Auto-detection looks possible.`
+    : `NO — none of the ${cardsSeen} cards checked mention Poké Ball or Master Ball (${withDetailed} had a detailed versions list). Values stay manual for now.`;
+  lines.splice(1, 0, `Result: ${verdict}`);
+  out.value = lines.join('\n'); status.textContent = verdict; go.disabled = false; $('#tdc-copy').disabled = false;
+}
+$('#tdc-run')?.addEventListener('click', runPatternCheck);
+$('#tdc-copy')?.addEventListener('click', async () => {
+  const t = $('#tdc-out').value; if (!t) return;
+  try { await navigator.clipboard.writeText(t); toast('Results copied — paste them into the chat', 'success'); }
+  catch { $('#tdc-out').select(); toast('Select all and copy the text in the box', 'info'); }
+});
+
 /* ---------- API search ---------- */
 function apiHeaders() { return S.settings.apiKey ? { 'X-Api-Key': S.settings.apiKey } : {}; }
 /* Phone keyboards turn " into “ ”, capitalise the first word (Artist:) and can add a space after
@@ -1316,7 +1420,7 @@ function mergeCard(c) {
   if (old?.cmId && !m.cmId) m.cmId = old.cmId;
   if (old?.vHide && !c.vHide) m.vHide = old.vHide;
   if (old?.vEv || c.vEv) { m.vEv = { ...(old?.vEv || {}) }; for (const [v, s] of Object.entries(c.vEv || {})) m.vEv[v] = [...new Set([...(m.vEv[v] || []), ...s])];
-    m.variants = V_ORDER.filter(v => m.vEv[v] || old?.variants?.includes(v) || c.variants?.includes(v)); }
+    m.variants = V_ALL.filter(v => m.vEv[v] || old?.variants?.includes(v) || c.variants?.includes(v)); }
   S.cards[c.id] = m;
 }
 const artistSource = c => c.artist_assigned ? 'assigned by you' : c.artist_tcgdex ? 'TCGdex' : (c.artist ? 'API' : '');
@@ -1822,9 +1926,9 @@ async function fillLevels(ids) {
 }
 async function openCmSend() {
   const fitOnly = UI.completeFit?.size > 0, src = (UI.completeList || []).filter(x => !fitOnly || UI.completeFit.has(x));
-  const list = src.filter(x => !S.cards[x.e.cardId]?.custom);
-  if (!list.length) { toast('No cards to send', 'warn'); return; }
-  UI.cmSend = { list, fitOnly, rows:null, skipped:src.length - list.length };
+  const list = src.filter(x => !S.cards[x.e.cardId]?.custom && !isPattern(x.e.variant)), pats = src.filter(x => isPattern(x.e.variant)).length;
+  if (!list.length) { toast(pats ? 'Poké Ball / Master Ball patterns aren\'t sent — a pasted line can\'t pick a pattern, so find those on Cardmarket by hand' : 'No cards to send', 'warn'); return; }
+  UI.cmSend = { list, fitOnly, rows:null, skipped:src.length - list.length - pats, pats };
   $('#cmt-title').textContent = 'Send to Cardmarket'; $('#cmt-body').innerHTML = `<p class="small muted" role="status" id="cmt-status">Getting attack names for ${list.length} card${list.length === 1 ? '' : 's'}…</p>`;
   $('#cmt-go').classList.add('hidden'); $('#dlg-cmtest').showModal();
   const byCard = new Map(); let n = 0;
@@ -1856,7 +1960,7 @@ function renderCmSend() {
   T.parts = parts; parts.forEach(p => { for (let i = 0; i < p.lines.length; i += CM_BLOCK) blocks.push(p.lines.slice(i, i + CM_BLOCK)); });
   const total = rows.reduce((n, r2) => n + r2.items.reduce((m, x) => m + (x.gbp || 0), 0), 0), missing = rows.filter(r2 => r2.missing).length;
   $('#cmt-body').innerHTML = `
-    <p class="small" style="margin:0 0 8px">${T.fitOnly ? 'The cards within your budget' : 'Every card in the list'}: <b>${rows.reduce((n, r2) => n + r2.q, 0)} card${rows.length === 1 ? '' : 's'}</b>, ≈ ${GBP.format(total)} at your prices${T.skipped ? ` · ${T.skipped} custom card(s) left out` : ''}.</p>
+    <p class="small" style="margin:0 0 8px">${T.fitOnly ? 'The cards within your budget' : 'Every card in the list'}: <b>${rows.reduce((n, r2) => n + r2.q, 0)} card${rows.length === 1 ? '' : 's'}</b>, ≈ ${GBP.format(total)} at your prices${T.skipped ? ` · ${T.skipped} custom card(s) left out` : ''}${T.pats ? ` · ${T.pats} Poké Ball / Master Ball pattern(s) left out — a pasted line can't ask for a pattern, so buy those by hand` : ''}.</p>
     <div class="cmt-routes">
       <section><h4>Exact versions <span class="muted small">(best for artwork lists)</span></h4>
         <ol class="cmt-steps small"><li>On Cardmarket, go to <b>Wants</b> and create a new list.</li>
@@ -2202,8 +2306,9 @@ function sanitizeCard(k, c) {
   if (typeof c.fp === 'string' && c.fp.length <= 400) { out.fp = c.fp; if (c.fpParts && typeof c.fpParts === 'object') out.fpParts = Object.fromEntries(['types', 'hp', 'abil', 'atk', 'art'].map(k => [k, str(c.fpParts[k], 200)])); }
   if (/^\d{1,3}$/.test(c.level || '')) out.level = c.level; if (c.lvChecked) out.lvChecked = true;
   if (Number.isInteger(c.cmId) && c.cmId > 0 && c.cmId < 1e9) out.cmId = c.cmId;
-  if (Array.isArray(c.variants)) out.variants = c.variants.filter(v => ['normal','holo','reverse','first'].includes(v));
-  if (Array.isArray(c.vHide)) out.vHide = c.vHide.filter(v => V_ORDER.includes(v));
+  if (Array.isArray(c.variants)) out.variants = c.variants.filter(v => V_ALL.includes(v));
+  if (c.pp && typeof c.pp === 'object') { const pp = {}; for (const v of PATTERNS) { const x = c.pp[v]; if (x && +x.gbp > 0 && +x.gbp < 1e6) pp[v] = { gbp:Math.round(+x.gbp * 100) / 100, at:str(x.at, 10), ...(x.usd > 0 && x.usd < 1e6 ? { usd:Math.round(+x.usd * 100) / 100 } : {}) }; } if (Object.keys(pp).length) out.pp = pp; }
+  if (Array.isArray(c.vHide)) out.vHide = c.vHide.filter(v => V_ALL.includes(v));
   if (c.vEv && typeof c.vEv === 'object') { out.vEv = {}; const OK = ['TCGdex', 'TCGplayer', 'Cardmarket', 'Pokémon TCG API'];
     for (const v of V_ORDER) if (Array.isArray(c.vEv[v])) { const s = c.vEv[v].filter(x => OK.includes(x)); if (s.length) out.vEv[v] = s; } }
   const pr = c.price;
@@ -2467,7 +2572,7 @@ function packShare({ kind, name, prices, groups, customs }) {
     let prev = 0, first = true;
     for (const it of g.items) {
       const numeric = /^\d{1,6}$/.test(it.num) && (g.pad ? it.num.length === g.pad : !/^0\d/.test(it.num)) && +it.num >= prev;
-      const extra = it.qty > 1 || it.lang ? 1 : 0;
+      const pat = { pokeball:4, masterball:8 }[it.v] || 0, extra = it.qty > 1 || it.lang || pat ? 1 : 0;
       uv((first ? 1 : 0) | extra << 1 | ({ holo:1, reverse:2, first:3 }[it.v] || 0) << 2 | (numeric ? 0 : 16));
       if (first) {
         const ix = !g.td || g.lang === 'en' ? SHARE_SET_IX.get(g.set) : undefined;
@@ -2477,23 +2582,23 @@ function packShare({ kind, name, prices, groups, customs }) {
         first = false;
       }
       if (numeric) { uv(+it.num - prev); prev = +it.num; } else sv(it.num);
-      if (extra) { uv((it.qty > 1 ? 1 : 0) | (it.lang ? 2 : 0)); if (it.qty > 1) uv(it.qty); if (it.lang) uv(LANG_LIST.indexOf(it.lang)); }
+      if (extra) { uv((it.qty > 1 ? 1 : 0) | (it.lang ? 2 : 0) | pat); if (it.qty > 1) uv(it.qty); if (it.lang) uv(LANG_LIST.indexOf(it.lang)); }
       if (prices) uv(it.pence != null ? it.pence + 1 : 0);
     }
   }
   uv(customs.length);
-  for (const x of customs) { sv(x.id); sv(x.name); sv(x.number); sv(x.set_name); uv({ holo:1, reverse:2, first:3 }[x.v] || 0); uv(x.qty); uv(x.pence != null ? x.pence + 1 : 0); }
+  for (const x of customs) { sv(x.id); sv(x.name); sv(x.number); sv(x.set_name); uv({ holo:1, reverse:2, first:3, pokeball:4, masterball:5 }[x.v] || 0); uv(x.qty); uv(x.pence != null ? x.pence + 1 : 0); }
   return new Uint8Array(out);
 }
 function unpackShare(bytes) {
   let p = 0; const uv = () => { let n = 0, mul = 1; for (let i = 0; i < 5; i++) { if (p >= bytes.length) throw new Error('truncated link'); const b = bytes[p++]; n += (b & 127) * mul; if (b < 128) return n; mul *= 128; } throw new Error('bad number'); };
   const sv = () => { const n = uv(); if (n > 120 || p + n > bytes.length) throw new Error('bad text'); const s = new TextDecoder().decode(bytes.subarray(p, p + n)); p += n; return s; };
-  const CV = ['', 'holo', 'reverse', 'first'], head = uv(), kind = ['want', 'trade', 'list', 'sale'][head & 3], prices = !!(head & 4);
+  const CV = ['', 'holo', 'reverse', 'first', 'pokeball', 'masterball'], head = uv(), kind = ['want', 'trade', 'list', 'sale'][head & 3], prices = !!(head & 4);
   const name = sv(), days = uv(), date = days < 40000 ? new Date(DAY0 + days * 864e5).toISOString().slice(0, 10) : '';
   const items = [], push = (id, extra) => { if (items.length < 1500 && ID_RE.test(id) && !BAD_KEYS.has(id)) items.push({ id, name:'', number:'', set_id:'', set_name:'', rarity:'', img:'', ...extra }); };
   const n = Math.min(uv(), 1500); let set = null, td = false, lang = 'en', pad = 0, prev = 0;
   for (let i = 0; i < n; i++) {
-    const f = uv(), v = CV[(f >> 2) & 3];
+    const f = uv(); let v = CV[(f >> 2) & 3];
     if (f & 1) {
       const ref = uv(), type = ref & 3; prev = 0;
       if (type === 0) { set = SHARE_SETS[ref >> 2]; td = false; pad = 0; }
@@ -2504,7 +2609,7 @@ function unpackShare(bytes) {
     } else if (!set) throw new Error('unrecognised link');
     let num; if (f & 16) num = sv(); else { prev += uv(); num = pad ? String(prev).padStart(pad, '0') : String(prev); }
     let q = 1, l = '';
-    if (f & 2) { const x = uv(); if (x & 1) q = Math.max(1, Math.min(999, uv())); if (x & 2) l = LANG_LIST[uv()] || ''; }
+    if (f & 2) { const x = uv(); if (x & 4) v = 'pokeball'; else if (x & 8) v = 'masterball'; if (x & 1) q = Math.max(1, Math.min(999, uv())); if (x & 2) l = LANG_LIST[uv()] || ''; }
     const pc = prices ? uv() : 0;
     if (!/^[A-Za-z0-9._]{1,30}$/.test(num)) continue;
     const base = { variant:v, n:q, gbp:pc ? (pc - 1) / 100 : null, lang:LANGS[l] ? l : '', number:num.replace(/^0+(?=\d)/, '') };
@@ -2960,6 +3065,7 @@ document.addEventListener('click', e => {
         .catch(e => toast(`Couldn't check TCGdex (${e.message})`, 'warn')).finally(() => { t.disabled = false; }); break; }
     case 'complete-jp': completeLookupJp(); break;
     case 'cm-send': openCmSend(); break;
+    case 'tdcheck': if ($('#dlg-settings').open) $('#dlg-settings').close(); $('#tdc-status').textContent = 'Takes about 20 seconds. Nothing in your collection changes.'; $('#dlg-tdcheck').showModal(); break;
     case 'vclear': if ($('#dlg-settings').open) $('#dlg-settings').close(); openVendorClear(); break;
     case 'rp-scan': { const col = active(); UI.reprints = { colId:col.id, busy:true }; UI.reprintsOpen = true; renderView();
       findReprints(col, (k, t2) => { const el = $('#rp-prog'); if (el) el.textContent = `Comparing card text… ${k} / ${t2}`; })

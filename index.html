@@ -185,7 +185,7 @@ label.f{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin:
 .price{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:600}
 .pwrap{display:inline-flex;align-items:center;gap:0;white-space:nowrap}
 .pdot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;flex:none;box-shadow:0 0 0 2px color-mix(in srgb,currentColor 0%,transparent)}
-.pdot.good{background:var(--ok)} .pdot.fallback{background:var(--warn)} .pdot.stale{background:var(--danger);box-shadow:0 0 0 2px color-mix(in srgb,var(--danger) 30%,transparent)}
+.pdot.manual{background:var(--info)} .pdot.good{background:var(--ok)} .pdot.fallback{background:var(--warn)} .pdot.stale{background:var(--danger);box-shadow:0 0 0 2px color-mix(in srgb,var(--danger) 30%,transparent)}
 .ptrend{font-size:12px;font-weight:700;margin-left:5px;font-variant-numeric:tabular-nums} .ptrend.up{color:var(--ok-text)} .ptrend.down{color:var(--danger)}
 .big .ptrend{font-size:13px}
 .deals{display:grid;gap:10px} .deal-cfg{gap:8px 14px;align-items:center} .deal-cfg label{display:inline-flex;align-items:center;gap:6px}
@@ -296,6 +296,11 @@ small{font-size:12px}
 .ttotal{display:flex;justify-content:space-between;font-weight:700;margin-top:10px;font-variant-numeric:tabular-nums}
 .verdict{border-radius:var(--r);padding:12px 14px;font-weight:650;background:var(--surface-2);text-align:center}
 .verdict.up{background:var(--ok-soft)} .verdict.down{background:color-mix(in srgb,var(--danger) 12%,transparent)}
+.ppv{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;align-items:center;margin-top:8px}
+.ppv .ppv-h{grid-column:1/-1}
+.ppv .inp{min-height:40px;font-size:16px;min-width:0}
+.ppv small{grid-column:1/-1}
+.ppv.compact{grid-column:1/-1}
 .picker{display:grid;gap:6px;max-height:280px;overflow:auto;margin-top:8px}
 /* basket / offer / trade lines: text on top, quantity underneath, price on the right */
 .titem.line{grid-template-columns:40px minmax(0,1fr) auto;row-gap:6px}
@@ -819,6 +824,10 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
         <button class="btn sm danger" id="st-reset">Reset everything</button>
       </div>
     </fieldset>
+    <fieldset><legend>Diagnostics</legend>
+      <p class="small muted" style="margin:0 0 8px">Checks whether TCGdex has started listing Poké Ball / Master Ball patterns, which would let the app detect them automatically.</p>
+      <button class="btn sm" data-act="tdcheck">Check TCGdex for pattern data…</button>
+    </fieldset>
     <fieldset><legend>About this version</legend>
       <dl class="kv small">
         <dt>App version</dt><dd><b id="st-ver"></b></dd>
@@ -889,7 +898,7 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
 <dialog id="dlg-lot"><div class="dlg">
   <div class="dlg-h"><h3 id="lot-title">Stock</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
   <div class="dlg-b">
-    <div class="titem" style="grid-template-columns:40px 1fr"><span id="lot-img"></span><div class="t"><b id="lot-sub"></b><span id="lot-market"></span></div></div>
+    <div class="titem" style="grid-template-columns:40px 1fr"><span id="lot-img"></span><div class="t"><b id="lot-sub"></b><span id="lot-market"></span></div></div><div id="lot-ppv"></div>
     <div class="grid2">
       <div><label class="f" for="lot-v">Printing</label><select id="lot-v" class="inp"></select></div>
       <div><label class="f" for="lot-c">Condition</label><select id="lot-c" class="inp"><option>NM</option><option>LP</option><option>MP</option><option>HP</option><option>DMG</option></select></div>
@@ -903,6 +912,19 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
   <div class="dlg-f"><button class="btn danger hidden" id="lot-del"><svg class="i sm"><use href="#i-trash"/></svg>Remove</button><span style="flex:1"></span><button class="btn" id="lot-sell"><svg class="i sm"><use href="#i-plus"/></svg>Sell</button><button class="btn primary" id="lot-save">Save</button></div>
 </div></dialog>
 
+<dialog id="dlg-spares"><div class="dlg">
+  <div class="dlg-h"><div><h3>Move spares to stock</h3><p class="small muted" id="sp-sub" style="margin:2px 0 0"></p></div><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <div class="dlg-b" id="sp-body"></div>
+  <div class="dlg-f"><button class="btn" data-close>Cancel</button><button class="btn primary" id="sp-go">Move to stock</button></div>
+</div></dialog>
+<dialog id="dlg-tdcheck"><div class="dlg">
+  <div class="dlg-h"><h3>TCGdex pattern check</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <div class="dlg-b">
+    <p class="small" id="tdc-status" role="status" style="margin:0"></p>
+    <textarea id="tdc-out" class="inp mono" readonly rows="12" style="font-size:12px;min-height:220px;white-space:pre;overflow:auto" aria-label="Check results" placeholder="Results appear here"></textarea>
+  </div>
+  <div class="dlg-f"><button class="btn" id="tdc-copy" disabled>Copy results</button><button class="btn primary" id="tdc-run">Run check</button></div>
+</div></dialog>
 <dialog id="dlg-vclear"><div class="dlg">
   <div class="dlg-h"><h3>Clear vendor data</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
   <div class="dlg-b" id="vc-body"></div>

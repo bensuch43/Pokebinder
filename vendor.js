@@ -58,6 +58,9 @@ function takeFromStock(lotId, q) { const l = S.stock[lotId]; if (!l) return 0; c
 const mktFor = (cardId, v, lang) => { const g = priceOf(S.cards[cardId], v)?.gbp; return g != null ? round2(g * (cardLang(cardId) ? 1 : langFactor(lang))) : null; };
 const mktBadge = (cardId, v) => { const pi = priceOf(S.cards[cardId], v); return pi ? priceDot(pi) + trendTag(pi) : ''; };
 const lotMarket = l => mktFor(l.cardId, l.v, langOf(l));
+/* Versions offered on the vendor screens: what exists for the card, plus Poké Ball / Master Ball on Scarlet & Violet-era
+   cards — at a table you need to log a pattern you haven't seen before without a trip to the binder. */
+const vendorVariants = c => { const vs = variantsOf(c); if (patternEra(c)) PATTERNS.forEach(p => { if (!vs.includes(p)) vs.push(p); }); return vs; };
 const lotAsk = l => l.price > 0 ? l.price : rulePrice({ id:l.cardId, v:l.v, lang:langOf(l) });
 function buyOffer(cardId, v, lang) {
   const m = mktFor(cardId, v, lang); if (m == null) return null;
@@ -86,7 +89,7 @@ async function vendorSearch(term) {
 /* ---------- price check: one screen for "what's this worth / what would you pay" ---------- */
 function checkHtml() {
   const V = S.vendor, res = UI.vfind.check || [], dl = V.defLang && LANGS[V.defLang] ? V.defLang : 'en';
-  const card = c => { const id = c.id, cc = S.cards[id] || c, vs = variantsOf(cc), v = vs.includes(UI.pcV[id]) ? UI.pcV[id] : vs[0];
+  const card = c => { const id = c.id, cc = S.cards[id] || c, vs = vendorVariants(cc), v = vs.includes(UI.pcV[id]) ? UI.pcV[id] : vs[0];
     const m = mktFor(id, v, dl), sell = rulePrice({ id, v, lang:dl }), offer = buyOffer(id, v, dl), lots = Object.values(S.stock).filter(l => l.cardId === id && l.v === v), have = lots.reduce((n, l) => n + l.q, 0);
     const img = safeUrl(cc.img_l || cc.img_s);
     return `<article class="pc-card">
@@ -94,11 +97,12 @@ function checkHtml() {
       <div class="pc-body"><h3>${esc(cc.name)}</h3><p class="small muted">${esc(cc.set_name)} · ${esc(cc.number)}${cc.rarity ? ' · ' + esc(cc.rarity) : ''}${dl !== 'en' && !cardLang(id) ? ` · priced for ${esc(LANGS[dl])}` : ''}</p>
         ${vs.length > 1 ? `<div class="pc-vs" role="group" aria-label="Printing">${vs.map(x => `<button type="button" class="chipbtn" data-vact="pcv" data-card="${esc(id)}" data-v="${x}" aria-pressed="${x === v}">${esc(VARIANTS[x])}</button>`).join('')}</div>` : ''}
         <dl class="pc-nums"><div><dt>Market</dt><dd class="pwrap">${mktBadge(id, v)}${m != null ? GBP.format(m) : '—'}</dd></div><div><dt>You sell at</dt><dd>${sell != null ? GBP.format(sell) : '—'}</dd></div><div><dt>You'd pay</dt><dd>${offer != null ? GBP.format(offer) : '—'}</dd></div><div><dt>In stock</dt><dd>${have || '0'}</dd></div></dl>
+        ${isPattern(v) && S.cards[id] ? patternValueHtml(id, v, true) : ''}
         <div class="pc-act">
           <button class="btn primary" data-vact="pc-sell" data-card="${esc(id)}" data-v="${v}"${have ? '' : ' disabled'}>${ic('plus', 'sm')}Sell</button>
           <button class="btn" data-vact="pc-buy" data-card="${esc(id)}" data-v="${v}">${ic('plus', 'sm')}Buy</button>
           <button class="btn" data-vact="pc-get" data-card="${esc(id)}" data-v="${v}">${ic('plus', 'sm')}Trade in</button>
-          <a class="btn ghost" href="${esc(cardmarketUrl(cc))}" target="_blank" rel="noopener noreferrer">${cc.cmId ? 'Cardmarket' : 'Find'}</a></div></div></article>`; };
+          <a class="btn ghost" href="${esc(cardmarketUrl(cc))}" target="_blank" rel="noopener noreferrer">${cc.cmId ? 'Cardmarket' : 'Find'}</a>${isPattern(v) ? '' : `<a class="btn ghost" href="${esc(pricechartingUrl(cc, v))}" target="_blank" rel="noopener noreferrer">PriceCharting</a>`}</div></div></article>`; };
   return `<section class="panel pc">
     <h2 style="margin:0 0 4px">Price check</h2><p class="small muted" style="margin:0 0 10px">Type the code printed at the bottom of the card (e.g. <code>PBL 42</code>) or a name. Selling price uses your sticker rule; the offer uses your buying %.</p>
     ${finderHtml('check', 'Printed code or card name')}
@@ -262,6 +266,7 @@ function stockHtml() {
       <div class="row">
         <button class="btn sm primary" data-vact="toggle-add">${ic('plus', 'sm')}Add stock</button>
         ${spares ? `<button class="btn sm" data-vact="move-spares">${ic('layers', 'sm')}Move ${spares} spare${spares === 1 ? '' : 's'} from “${esc(col.name)}”</button>` : ''}
+        <button class="btn sm" data-vact="stock-refresh"${Object.keys(S.stock).length ? '' : ' disabled'}>${ic('refresh', 'sm')}Refresh prices</button>
         <button class="btn sm" data-act="labels">${ic('sticker', 'sm')}Price stickers</button>
         <button class="btn sm" data-act="share-trade"${Object.keys(S.stock).length ? '' : ' disabled'}>${ic('share', 'sm')}Share</button>
         <button class="btn sm" data-vact="stock-csv"${Object.keys(S.stock).length ? '' : ' disabled'}>${ic('download', 'sm')}CSV</button>
@@ -325,9 +330,9 @@ function buyHtml() {
       ${L.length ? `<div class="tlist">${L.map((b, i) => { const c = S.cards[b.cardId] || {}, off = buyOffer(b.cardId, b.v, langOf(b)), m = mktFor(b.cardId, b.v, langOf(b));
         return `<div class="titem line">${thumb(b.cardId)}<div class="t"><b>${esc(c.name)}</b><span class="pwrap">${cardSub(b.cardId)} · ${mktBadge(b.cardId, b.v)}mkt ${m != null ? GBP.format(m) : '—'} ${priceAge(b.cardId)}</span>
             <div class="row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
-              <select class="inp" data-vin="buyv" data-i="${i}" style="min-height:34px;font-size:13px;padding:0 26px 0 8px" aria-label="Printing">${variantsOf(c).map(v => `<option value="${v}"${v === b.v ? ' selected' : ''}>${VARIANTS[v]}</option>`).join('')}</select>
+              <select class="inp" data-vin="buyv" data-i="${i}" style="min-height:34px;font-size:13px;padding:0 26px 0 8px" aria-label="Printing">${vendorVariants(c).map(v => `<option value="${v}"${v === b.v ? ' selected' : ''}>${VARIANTS[v]}</option>`).join('')}</select>
               <select class="inp" data-vin="buyc" data-i="${i}" style="min-height:34px;font-size:13px;padding:0 26px 0 8px;width:auto" aria-label="Condition">${CONDITIONS.map(k => `<option${k === b.c ? ' selected' : ''}>${k}</option>`).join('')}</select>
-              ${langSelect('buyl', i, langOf(b))}</div></div>
+              ${langSelect('buyl', i, langOf(b))}</div>${isPattern(b.v) ? patternValueHtml(b.cardId, b.v, true) : ''}</div>
           <div style="display:grid;justify-items:end;gap:4px"><div class="stepper"><button type="button" data-vact="yq" data-i="${i}" data-d="-1" aria-label="One fewer">${ic('minus', 'sm')}</button><output>${b.q}</output><button type="button" data-vact="yq" data-i="${i}" data-d="1" aria-label="One more">${ic('plus', 'sm')}</button></div>
             <input class="inp mono" data-vin="bu" data-i="${i}" inputmode="decimal" value="${b.unit != null ? b.unit.toFixed(2) : ''}" placeholder="${off != null ? off.toFixed(2) : '£ each'}" style="width:84px;min-height:36px;font-size:15px" aria-label="Offer each">
             <button class="btn sm ghost icon" data-vact="yrm" data-i="${i}" aria-label="Remove">${ic('x', 'sm')}</button></div></div>`; }).join('')}</div>
@@ -344,7 +349,7 @@ function vtradeHtml() {
   const rv = V.get.reduce((n, g) => n + (mktFor(g.cardId, g.v, langOf(g)) || 0) * g.q, 0), diff = rv - gv;
   const line = (side, it, i) => { const isGive = side === 'give', l = isGive ? S.stock[it.lotId] : null, id = isGive ? l?.cardId : it.cardId; if (!id) return '';
     const val = isGive ? lotMarket(l) : mktFor(id, it.v, langOf(it));
-    return `<div class="titem line">${thumb(id)}<div class="t"><b>${isGive ? lotLabel(l) : esc(S.cards[id]?.name)}</b><span>${cardSub(id)}${isGive ? ` · ${l.q} in stock` : ` · ${esc(VARIANTS[it.v])}`}</span>${isGive ? '' : `<div style="margin-top:6px">${langSelect('getl', i, langOf(it))}</div>`}</div>
+    return `<div class="titem line">${thumb(id)}<div class="t"><b>${isGive ? lotLabel(l) : esc(S.cards[id]?.name)}</b><span>${cardSub(id)}${isGive ? ` · ${l.q} in stock` : ` · ${esc(VARIANTS[it.v])}`}</span>${isGive ? '' : `<div class="row" style="margin-top:6px;gap:6px;flex-wrap:nowrap"><select class="inp" data-vin="getv" data-i="${i}" style="min-height:34px;font-size:13px;padding:0 26px 0 8px" aria-label="Printing">${vendorVariants(S.cards[id] || {}).map(x => `<option value="${x}"${x === it.v ? ' selected' : ''}>${VARIANTS[x]}</option>`).join('')}</select>${langSelect('getl', i, langOf(it))}</div>${isPattern(it.v) ? patternValueHtml(id, it.v, true) : ''}`}</div>
       <div class="stepper"><button type="button" data-vact="tq" data-side="${side}" data-i="${i}" data-d="-1" aria-label="One fewer">${ic('minus', 'sm')}</button><output>${it.q}</output><button type="button" data-vact="tq" data-side="${side}" data-i="${i}" data-d="1" aria-label="One more">${ic('plus', 'sm')}</button></div>
       <div style="display:grid;justify-items:end;gap:2px"><span class="price">${val != null ? GBP.format(val * it.q) : '—'}</span><button class="btn sm ghost icon" data-vact="trm" data-side="${side}" data-i="${i}" aria-label="Remove">${ic('x', 'sm')}</button></div></div>`; };
   return `<section class="panel"><h2>Trade</h2><p class="muted">Swap cards from your stock for a customer's cards, compared at current ${(S.settings.priceSource || CONFIG.priceSource) === 'tcgplayer' ? 'TCGplayer' : 'Cardmarket'} prices in GBP. Applying it updates your stock and logs the trade.</p>
@@ -417,6 +422,7 @@ async function vendorAction(t, e) {
     case 'trade': completeTrade(); break;
     case 'void': if (await confirmDlg('Void this entry?', 'It stays in the ledger, crossed out and excluded from totals, and the stock changes it made are reversed.', 'Void')) voidTxn(t.dataset.id); break;
     case 'move-spares': moveSpares(); break;
+    case 'stock-refresh': refreshStockPrices(); break;
     case 'pcv': UI.pcV[t.dataset.card] = t.dataset.v; renderVendor(); break;
     case 'pc-clear': UI.vfind.check = []; renderVendor(); document.querySelector('form[data-find="check"] input')?.focus(); break;
     case 'pc-sell': { const lot = Object.values(S.stock).filter(l => l.cardId === t.dataset.card && l.v === t.dataset.v).sort((x, y) => (lotAsk(y) || 0) - (lotAsk(x) || 0))[0];
@@ -478,17 +484,70 @@ function completeTrade() {
   record('trade', 'other', lines, getVal); V.give = []; V.get = []; vSave();
   undoable('Trade applied — stock updated', snap);
 }
-async function moveSpares() {
+/* Spares → stock. A picker, not all-or-nothing: every spare is listed with its own quantity
+   (defaults to all), so you can keep some back for trading or a second binder. */
+function moveSpares() {
   const col = active(); if (!col) return;
   const plan = [];
-  for (const id of col.cardIds) { const c = S.cards[id]; if (!c) continue; for (const sp of sparesOf(col, c)) plan.push({ id, sv:sp.v, n:sp.n, c }); }
-  const n = plan.reduce((a, p) => a + p.n, 0); if (!n) return;
-  if (!await confirmDlg('Move spares into stock?', `${n} spare cop${n === 1 ? 'y' : 'ies'} leave “${col.name}” and go into your stock for sale, keeping their condition and the price you paid as cost. The copy in each binder pocket stays.`, 'Move to stock')) return;
+  for (const id of col.cardIds) { const c = S.cards[id]; if (!c) continue;
+    for (const sp of sparesOf(col, c)) { const rec = col.copies[id][sp.v] || {};
+      plan.push({ id, sv:sp.v, v:sp.v === 'any' ? primaryVariant(c, col) : sp.v, max:sp.n, n:sp.n, c:rec.c || '', l:rec.l || 'en' }); } }
+  if (!plan.length) return;
+  plan.sort((x, y) => (mktFor(y.id, y.v, y.l) || 0) - (mktFor(x.id, x.v, x.l) || 0));
+  UI.spares = { colId:col.id, plan };
+  $('#sp-sub').textContent = `From “${col.name}”. The copy in each binder pocket stays; condition, language and the price you paid come with the spare.`;
+  renderSpares(); $('#dlg-spares').showModal();
+}
+function renderSpares() {
+  const P = UI.spares?.plan || [], n = P.reduce((a, p) => a + p.n, 0), val = P.reduce((a, p) => a + (mktFor(p.id, p.v, p.l) || 0) * p.n, 0);
+  $('#sp-body').innerHTML = `<div class="row" style="justify-content:space-between"><span class="small muted">${P.length} card${P.length === 1 ? '' : 's'} with spares · sorted by value</span>
+      <span class="row"><button class="btn sm ghost" data-sp="all">All</button><button class="btn sm ghost" data-sp="none">None</button></span></div>
+    <div class="tlist">${P.map((p, i) => { const m = mktFor(p.id, p.v, p.l);
+      return `<div class="titem line">${thumb(p.id)}<span class="t"><b>${lotLabel({ cardId:p.id, v:p.v, lang:p.l, c:p.c })}</b><span>${cardSub(p.id)} · ${p.max} spare${p.max === 1 ? '' : 's'}</span></span>
+        <div class="stepper"><button type="button" data-sp="q" data-i="${i}" data-d="-1" aria-label="One fewer"${p.n ? '' : ' disabled'}>${ic('minus', 'sm')}</button><output>${p.n}</output><button type="button" data-sp="q" data-i="${i}" data-d="1" aria-label="One more"${p.n < p.max ? '' : ' disabled'}>${ic('plus', 'sm')}</button></div>
+        <span class="small" style="text-align:right">${m != null ? `${GBP.format(m)}<br><span class="muted">each</span>` : '<span class="muted">no price</span>'}</span></div>`; }).join('')}</div>`;
+  $('#sp-go').disabled = !n;
+  $('#sp-go').textContent = n ? `Move ${n} to stock${val ? ` (${GBP.format(val)})` : ''}` : 'Move to stock';
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-sp]'); if (!t || !UI.spares) return;
+  const P = UI.spares.plan, k = t.dataset.sp;
+  if (k === 'all') P.forEach(p => p.n = p.max);
+  else if (k === 'none') P.forEach(p => p.n = 0);
+  else if (k === 'q') { const p = P[+t.dataset.i]; if (p) p.n = Math.max(0, Math.min(p.max, p.n + +t.dataset.d)); }
+  renderSpares();
+});
+$('#sp-go').addEventListener('click', () => {
+  const col = S.collections[UI.spares?.colId]; if (!col) return;
+  const pick = UI.spares.plan.filter(p => p.n > 0), n = pick.reduce((a, p) => a + p.n, 0); if (!n) return;
   const snap = snapshot();
-  for (const p of plan) { const rec = col.copies[p.id][p.sv]; const v = p.sv === 'any' ? primaryVariant(p.c, col) : p.sv;
-    rec.q -= p.n; addToStock(p.id, v, rec.c, p.n, rec.p ?? null, 'spares', rec.l || 'en'); }
+  for (const p of pick) { const rec = col.copies[p.id]?.[p.sv]; if (!rec) continue;
+    const take = Math.min(p.n, rec.q || 0); if (take <= 0) continue;   // binder changed underneath us: never go negative
+    rec.q -= take; addToStock(p.id, p.v, rec.c, take, rec.p ?? null, 'spares', rec.l || 'en'); }
+  $('#dlg-spares').close(); UI.spares = null;
   syncOwned(col); col.updated = Date.now(); S.vendor.vtab = 'stock'; vSave();
   undoable(`Moved ${n} spare${n === 1 ? '' : 's'} into stock`, snap);
+});
+
+/* Refresh every stock card's Cardmarket price (TCGdex), then re-run Needs attention.
+   Lots that follow the sticker rule re-price themselves; hand-set prices are left alone. */
+async function refreshStockPrices() {
+  const ids = [...new Set(Object.values(S.stock).map(l => l.cardId))].filter(id => S.cards[id] && !S.cards[id].custom);
+  if (!ids.length) { toast('No stock cards to price', 'warn'); return; }
+  if (navigator.onLine === false) { toast('Offline — using saved prices', 'warn'); return; }
+  const btn = $('[data-vact=stock-refresh]'); if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+  const before = attentionLists(); let done = 0;
+  try {
+    ids.forEach(id => { if (S.cards[id].price?.td) S.cards[id].price.td.fetched = ''; });   // force, like the binder refresh
+    const got = await tcgdexPrices(ids, (n, t) => { done = n; const b = $('[data-vact=stock-refresh]'); if (b) b.textContent = `Refreshing ${n} / ${t}`; });
+    save(); renderVendor();
+    const A = attentionLists(), moved = A.drift.length, stick = A.sticker.length;
+    const unpriced = ids.filter(id => !S.cards[id].price?.td).length;
+    toast(`Prices refreshed for ${got} of ${ids.length} stock card${ids.length === 1 ? '' : 's'}` +
+      (tdFailed ? ` · ${tdFailed} couldn't be checked (TCGdex busy or offline) — try again in a minute` : unpriced ? ` · ${unpriced} have no Cardmarket price` : '') +
+      (moved || stick ? ` · Needs attention: ${moved} price${moved === 1 ? '' : 's'} moved, ${stick} sticker${stick === 1 ? '' : 's'} out of date` : ''),
+      tdFailed ? 'warn' : 'success', (moved + stick) > (before.drift.length + before.sticker.length) ? { label:'Show', fn:() => { S.vendor.attnOpen = true; vSave(); } } : undefined);
+  } catch (e) { renderVendor(); toast(`Price refresh stopped after ${done} cards: ${e.message}`, 'error'); }
 }
 
 /* ---------- lot editor ---------- */
@@ -498,7 +557,7 @@ function openLot(lotId, newCardId) {
   $('#lot-title').textContent = c.name;
   $('#lot-sub').innerHTML = `${cardSub(id)}${c.rarity ? ' · ' + esc(c.rarity) : ''}`;
   $('#lot-img').innerHTML = thumb(id);
-  $('#lot-v').innerHTML = variantsOf(c).map(v => `<option value="${v}"${v === (l?.v || primaryVariant(c)) ? ' selected' : ''}>${VARIANTS[v]}</option>`).join('');
+  $('#lot-v').innerHTML = vendorVariants(c).map(v => `<option value="${v}"${v === (l?.v || primaryVariant(c)) ? ' selected' : ''}>${VARIANTS[v]}</option>`).join('');
   $('#lot-c').value = l?.c || 'NM'; $('#lot-q').value = l?.q || 1;
   $('#lot-l').innerHTML = Object.entries(LANGS).map(([k, n]) => `<option value="${k}"${k === (cardLang(id) || (l ? langOf(l) : (S.vendor.defLang || 'en'))) ? ' selected' : ''}>${n}</option>`).join('');
   $('#lot-l').disabled = !!cardLang(id);   // fixed for cards that are themselves Japanese/Korean/Chinese
@@ -511,6 +570,7 @@ function lotMarketNote() {
   const id = UI.lot?.cardId, v = $('#lot-v').value, lang = $('#lot-l').value || 'en', m = mktFor(id, v, lang), rp = rulePrice({ id, v, lang });
   $('#lot-market').innerHTML = `Market ${m != null ? GBP.format(m) : '—'}${cardLang(id) ? ` (${LANGS[cardLang(id)]} card — priced as ${LANGS[cardLang(id)]} already)` : lang !== 'en' && langFactor(lang) !== 1 ? ` (${Math.round(langFactor(lang) * 100)}% for ${LANGS[lang]})` : ''} ${priceAge(id)} · selling rule gives ${rp != null ? GBP.format(rp) : '—'}`;
   $('#lot-price').placeholder = rp != null ? rp.toFixed(2) : '£';
+  $('#lot-ppv').innerHTML = isPattern(v) ? patternValueHtml(id, v, true) : '';
 }
 $('#lot-v').addEventListener('change', lotMarketNote);
 $('#lot-l').addEventListener('change', lotMarketNote);
@@ -548,6 +608,7 @@ document.addEventListener('change', e => {
   else if (k === 'buyRound') V.buyRound = [0, 0.05, 0.1, 0.5, 1].includes(+el.value) ? +el.value : 0.1;
   else if (k === 'bu') { const n = vNum(el.value); if (V.buy[i]) V.buy[i].unit = n >= 0 && n < 1e5 && el.value.trim() !== '' ? round2(n) : null; }
   else if (k === 'buyv') { if (V.buy[i] && VARIANTS[el.value]) V.buy[i].v = el.value; }
+  else if (k === 'getv') { if (V.get[i] && VARIANTS[el.value]) V.get[i].v = el.value; }
   else if (k === 'buyc') { if (V.buy[i] && CONDITIONS.includes(el.value)) V.buy[i].c = el.value; }
   else if (k === 'buyl') { if (V.buy[i] && LANGS[el.value]) V.buy[i].lang = el.value; }
   else if (k === 'getl') { if (V.get[i] && LANGS[el.value]) V.get[i].lang = el.value; }

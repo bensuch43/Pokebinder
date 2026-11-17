@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.8.2
+# PokéBinder Studio v3.9.1
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,22 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## v3.9.1: TCGdex pattern check
+- **Settings → Diagnostics → Check TCGdex for pattern data…** pulls the first three cards of Prismatic Evolutions, Black Bolt, White Flare and Japanese 151 (SV2a) from TCGdex. It reports each card's version flags, its detailed versions list, its price keys, and anywhere "Poké Ball" or "Master Ball" appears. The first line gives a YES/NO verdict; **Copy results** puts the whole report on the clipboard. Read-only: nothing in your collection changes.
+
+## v3.9: Poké Ball and Master Ball patterns
+- **Two new versions:** Poké Ball and Master Ball (tags PB / MB). Add them to any card in its details (*Add printing*); in master-set mode they become their own binder slots.
+- **On the vendor screens** (Check, Buy, Trade, stock editor) every Scarlet & Violet-era card (released 2023 on) offers both patterns, so you can log one at a table without going to the binder first. Trade-in lines now have a version picker too.
+- **Prices: you set them.** No free feed prices patterns separately. TCGdex's Cardmarket figures are a single "foil" price shared by every reverse, so the app never borrows the plain reverse price (that would undervalue a Master Ball). Type a value in £, or paste PriceCharting's dollar figure with a $ (e.g. `$11.06`) and it is converted at the current $ rate. A blue dot marks a value you set; it is shared by binders, stock, offers and trades.
+- **PriceCharting button** next to every pattern value (and on the Check card for other versions) opens PriceCharting's search for that card and pattern, which goes straight to the product page.
+- **Share links** carry patterns. Older versions of the app open the same link and show those cards as Normal.
+- **Send to Cardmarket** leaves patterns out and says how many, because a pasted line can't pick a pattern.
+- Why not scrape PriceCharting? Its data is sold under licence (paid API, internal use only), and page-to-API tools such as api-anything need a computer or server running alongside the app, which an iPhone PWA on GitHub Pages doesn't have.
+
+## v3.8.3: show prep
+- **Refresh prices** on Vendor → Stock re-checks every stock card on Cardmarket (via TCGdex), with progress on the button. Lots that follow your sticker rule re-price themselves; prices you set by hand are kept, and the toast tells you how many have moved so you can review them in Needs attention.
+- **Move spares** now opens a picker instead of moving everything. Each spare is listed by value with its own quantity (defaults to all), plus All / None. The button shows how many copies and their market value. Undo works as before.
 
 ## v3.8.2: clear vendor data on its own
 - **Clear vendor data…** is in Vendor → Stock and in Settings → Storage. Tick what to clear:
