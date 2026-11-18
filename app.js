@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.9.7',
+  version: '3.9.8',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -68,6 +68,7 @@ const VSHORT = { normal:'', holo:'Holo', reverse:'Rev', first:'1st', pokeball:'P
    so they are never given a borrowed price: you set a value (typed in £, or $ straight from PriceCharting). */
 /* What's new: shown once after an update (newest first). Keep each list to three plain bullets. */
 const WHATS_NEW = [
+  { v:'3.9.8', items:['Cards from sets newer than the app (Delta Reign onwards) now link to TCGdex, so they get Cardmarket prices, holo / reverse versions and Poké Ball / Master Ball data. Refresh prices on Stock to fix cards you have already added.'] },
   { v:'3.9.7', items:['Deleting a collection, removing stock or voiding a ledger entry happens straight away, with Undo, instead of an "Are you sure?" step.',
     'Switching screens and vendor tabs eases across instead of jumping (off when Reduce Motion is on).',
     'Fill every pocket in a collection and it gets a small celebration, once.'] },
@@ -1422,8 +1423,21 @@ async function tdSearch(mode, term, lang, onProgress, signal, keep = () => true)
   if (dexWanted) cards = cards.filter(c => c.dex === dexWanted);
   return { cards:cards.sort(SORTS.release), total, truncated, note };
 }
+/* A Pokémon TCG API set the built-in table doesn't know yet (newer than it, e.g. Delta Reign me6 → TCGdex me06):
+   find it in TCGdex's set list by name, or by the id pattern, and remember the match. */
+async function tdSetForPt(c) {
+  if (!c?.set_id || c.lang) return null;
+  let list = await tdSetsList('en').catch(() => []);
+  const known = l => l.some(s => normName(s.name) === normName(c.set_name) || ruleSetId(s.id) === c.set_id);
+  if (!known(list) && Date.now() - (S.tdSetsList?.en?.ts || 0) > 36e5) { delete S.tdSetsList.en; list = await tdSetsList('en').catch(() => []); }   // TCGdex may have added it since
+  const byName = list.filter(s => normName(s.name) === normName(c.set_name)), byId = list.filter(s => ruleSetId(s.id) === c.set_id);
+  const hit = (byName.length === 1 ? byName[0] : byId.length === 1 ? byId[0] : byName.find(s => byId.includes(s)))?.id || null;
+  if (hit) { (S.tcgdexSetMap ||= {})[hit] = c.set_id; save(); }
+  return hit;
+}
 async function tcgdexIdFor(c) {
   const sets = [...(Object.hasOwn(PT_TO_TD, c.set_id) ? PT_TO_TD[c.set_id] : []), ...Object.entries(S.tcgdexSetMap || {}).filter(([, pt]) => pt === c.set_id).map(([td]) => td)];
+  if (!sets.length) { const td = await tdSetForPt(c); if (td) sets.push(td); }
   for (const td of [...new Set(sets)]) {
     const m = await tdSetIndex(td).catch(() => null); const e = m?.[normNo(c.number)];
     if (e && normName(e.name) === normName(c.name)) return e.id;   // same card name on both sides, or no match

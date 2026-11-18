@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.9.7
+# PokéBinder Studio v3.9.8
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,11 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## v3.9.8: new sets get TCGdex prices
+- **Bug:** cards found by printed code come from the Pokémon TCG API, which has no prices any more. They're linked to TCGdex (prices, holo / reverse, patterns) through a built-in table of set ids that ended at Pitch Black (ME05). Delta Reign (ME06) cards were never linked, so they showed Normal only and no price.
+- **Fix:** a set missing from the table is now found in TCGdex's set list by name (or id pattern, me6 → me06) and remembered. If the saved list is over an hour old and doesn't have the set, it's downloaded again, in case TCGdex has just added it.
+- Cards you've already added fix themselves on the next Stock *Refresh prices* (or binder refresh, or a Check look-up).
 
 ## v3.9.7: polish
 - **What's new:** after an update, a short card lists what changed since the version you last opened (up to three releases). It's skipped on first use. Edit `WHATS_NEW` at the top of the patterns section in app.js each release.
