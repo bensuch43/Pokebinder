@@ -55,7 +55,9 @@ function addToStock(cardId, v, c, q, cost, src, lang = 'en') {
   return l;
 }
 function takeFromStock(lotId, q) { const l = S.stock[lotId]; if (!l) return 0; const n = Math.min(l.q, q); l.q -= n; if (l.q <= 0) delete S.stock[lotId]; return n; }
-const mktFor = (cardId, v, lang) => { const g = priceOf(S.cards[cardId], v)?.gbp; return g != null ? round2(g * (cardLang(cardId) ? 1 : langFactor(lang))) : null; };
+const mktFor = (cardId, v, lang) => {
+  if (lang === 'ja' && !cardLang(cardId)) { const j = bestJp(S.cards[cardId], v); if (j) return round2(j.pi.gbp); }   // Japanese copy: its Japanese print's Cardmarket price
+  const g = priceOf(S.cards[cardId], v)?.gbp; return g != null ? round2(g * (cardLang(cardId) ? 1 : langFactor(lang))) : null; };
 const mktBadge = (cardId, v) => { const pi = priceOf(S.cards[cardId], v); return pi ? priceDot(pi) + trendTag(pi) : ''; };
 const lotMarket = l => mktFor(l.cardId, l.v, langOf(l));
 /* Versions offered on the vendor screens: what exists for the card, plus Poké Ball / Master Ball on Scarlet & Violet-era
@@ -545,6 +547,8 @@ async function refreshStockPrices() {
   try {
     ids.forEach(id => { if (S.cards[id].price?.td) S.cards[id].price.td.fetched = ''; });   // force, like the binder refresh
     const got = await tcgdexPrices(ids, (n, t) => { done = n; const b = $('[data-vact=stock-refresh]'); if (b) b.textContent = `Refreshing ${n} / ${t}`; });
+    const jaIds = Object.values(S.stock).filter(l => langOf(l) === 'ja' && !cardLang(l.cardId)).map(l => l.cardId);
+    if (jaIds.length) await refreshJpFor(jaIds, (n, t) => { const b = $('[data-vact=stock-refresh]'); if (b) b.textContent = `Japanese prints ${n} / ${t}`; });
     save(); renderVendor();
     const A = attentionLists(), moved = A.drift.length, stick = A.sticker.length;
     const unpriced = ids.filter(id => !S.cards[id].price?.td).length;
@@ -578,7 +582,7 @@ function lotMarketNote() {
   $('#lot-ppv').innerHTML = isPattern(v) ? patternValueHtml(id, v, true) : '';
 }
 $('#lot-v').addEventListener('change', lotMarketNote);
-$('#lot-l').addEventListener('change', lotMarketNote);
+$('#lot-l').addEventListener('change', () => { lotMarketNote(); if ($('#lot-l').value === 'ja' && UI.lot?.cardId) refreshJpFor([UI.lot.cardId]).then(() => { if ($('#dlg-lot').open) lotMarketNote(); }); });
 $('#lot-save').addEventListener('click', () => {
   const { lotId, cardId } = UI.lot, v = $('#lot-v').value, c = CONDITIONS.includes($('#lot-c').value) ? $('#lot-c').value : '', lang = LANGS[$('#lot-l').value] ? $('#lot-l').value : 'en';
   const q = Math.max(0, Math.min(9999, Math.floor(vNum($('#lot-q').value) ?? 1))), cost = vNum($('#lot-cost').value), price = vNum($('#lot-price').value);
@@ -615,8 +619,8 @@ document.addEventListener('change', e => {
   else if (k === 'buyv') { if (V.buy[i] && VARIANTS[el.value]) V.buy[i].v = el.value; }
   else if (k === 'getv') { if (V.get[i] && VARIANTS[el.value]) V.get[i].v = el.value; }
   else if (k === 'buyc') { if (V.buy[i] && CONDITIONS.includes(el.value)) V.buy[i].c = el.value; }
-  else if (k === 'buyl') { if (V.buy[i] && LANGS[el.value]) V.buy[i].lang = el.value; }
-  else if (k === 'getl') { if (V.get[i] && LANGS[el.value]) V.get[i].lang = el.value; }
+  else if (k === 'buyl') { if (V.buy[i] && LANGS[el.value]) { V.buy[i].lang = el.value; if (el.value === 'ja') { const id = V.buy[i].cardId; refreshJpFor([id]).then(() => renderVendor()); } } }
+  else if (k === 'getl') { if (V.get[i] && LANGS[el.value]) { V.get[i].lang = el.value; if (el.value === 'ja') { const id = V.get[i].cardId; refreshJpFor([id]).then(() => renderVendor()); } } }
   else if (k === 'deflang') { if (LANGS[el.value]) V.defLang = el.value; }
   else if (k === 'ladj') { const n = vNum(el.value), lg = el.dataset.lang; if (LANGS[lg] && lg !== 'en') { (V.langAdj ||= {}); if (n > 0 && n <= 500) V.langAdj[lg] = n; else delete V.langAdj[lg]; } }
   else return;

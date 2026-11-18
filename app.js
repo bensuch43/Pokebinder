@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.9.4',
+  version: '3.9.6',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -478,7 +478,20 @@ function pickCardmarket(c, variant) {
   return { hit, status, want };
 }
 /* Market figure for a pattern from its own product: Cardmarket foil columns or TCGplayer, by your price-source setting. */
-const patKey = (c, v) => c?.patSwap ? (v === 'pokeball' ? 'masterball' : 'pokeball') : v;   // your correction: this card's Cardmarket listings are the wrong way round
+/* TCGdex has some cards' Cardmarket Poké Ball and Master Ball products the wrong way round (White Flare Vanillish,
+   Simisear, Heatmor, Swadloon …). When TCGplayer prices both patterns, a crossed match is easy to see:
+   Cardmarket's Poké Ball ≈ TCGplayer's Master Ball and vice versa. Corrected automatically when the crossed pairing
+   fits at least 4× better than the straight one; you can override per card (c.patSwap true/false; unset = automatic). */
+function cmSwapAuto(c) {
+  const P = c?.patPx?.pokeball, M = c?.patPx?.masterball; if (!P || !M) return false;
+  const cmv = x => x?.trendH || x?.avg30H || x?.avg7H, a = cmv(P), b = cmv(M), p = P.tcp, m = M.tcp;
+  if (!(a > 0 && b > 0 && p > 0 && m > 0)) return false;
+  const er = fxRate('EUR') || 1, ur = fxRate('USD') || 1, L = (x, y) => Math.abs(Math.log((x * er) / (y * ur)));
+  const straight = L(a, p) + L(b, m), crossed = L(a, m) + L(b, p);
+  return straight - crossed > Math.log(4) && crossed < Math.log(9);
+}
+const cmSwapped = c => typeof c?.patSwap === 'boolean' ? c.patSwap : cmSwapAuto(c);
+const patKey = (c, v) => cmSwapped(c) ? (v === 'pokeball' ? 'masterball' : 'pokeball') : v;
 function patternFeed(c, v) {
   const fc = c?.patPx?.[patKey(c, v)], ft = c?.patPx?.[v];   // the swap applies to Cardmarket only; TCGplayer keeps its own mapping
   if (!fc && !ft) return null;
@@ -502,9 +515,10 @@ function patternPrice(c, v) {
   const notes = [];
   if (f.cm?.gbp && f.tp?.gbp) { const hi = Math.max(f.cm.gbp, f.tp.gbp), lo = Math.min(f.cm.gbp, f.tp.gbp); if (hi > 1 && hi / lo > 3) notes.push(`Cardmarket ${GBP.format(f.cm.gbp)} vs TCGplayer ${GBP.format(f.tp.gbp)}`); }
   const pb = patternFeed(c, 'pokeball')?.gbp, mb = patternFeed(c, 'masterball')?.gbp;
-  if (!c.patSwap && pb > 1 && mb > 0 && pb > mb * 1.5) notes.push('Poké Ball priced above Master Ball');
+  if (pb > 1 && mb > 0 && pb > mb * 1.5) notes.push('Poké Ball priced above Master Ball');
   const fresh = isFresh(f.date || f.cm?.date || f.tp?.date), status = notes.length || f.fallbackSrc ? 'fallback' : fresh ? 'good' : 'stale';
-  return { gbp:f.gbp, native:f.native, cur:f.cur, src:f.src, metric:f.metric, fig:f.fig, want:figPref(), date:f.date, url:patternCmUrl(c, v) || pricechartingUrl(c, v), fetched:c.price?.td?.fetched || '',
+  const fixed = f.cur === 'EUR' && cmSwapped(c) ? (typeof c.patSwap === 'boolean' ? '; Poké Ball / Master Ball listings swapped by you' : '; TCGdex had the Poké Ball / Master Ball listings the wrong way round, corrected automatically') : '';
+  return { gbp:f.gbp, native:f.native, cur:f.cur, src:f.src.replace(/\)$/, fixed + ')'), metric:f.metric, fig:f.fig, want:figPref(), date:f.date, url:patternCmUrl(c, v) || pricechartingUrl(c, v), fetched:c.price?.td?.fetched || '',
     status, stale:status === 'stale', fallback:status === 'fallback', trend:null, note:notes.join('; '), feed:f };
 }
 /* Set (or clear) your value for a pattern. Accepts "8.50", "£8.50" or "$11.06" (converted at the current $ rate). */
@@ -527,15 +541,17 @@ function patternValueHtml(id, v, compact) {
   return `<div class="ppv${compact ? ' compact' : ''}"><span class="small ppv-h">${esc(VARIANTS[v])} value <span class="muted">${compact ? '(£ or $)' : '(£, or $ from PriceCharting)'}</span></span>
     <input class="inp" data-ppv="${esc(id)}" data-v="${v}" inputmode="decimal" autocomplete="off" placeholder="${f ? 'market price' : 'e.g. 8.50'}" value="${x ? x.gbp.toFixed(2) : ''}" aria-label="${esc(VARIANTS[v])} value in pounds, or dollars with a $ sign">
     <span class="ppv-links"><a class="btn sm ghost" href="${esc(pricechartingUrl(c, v))}" target="_blank" rel="noopener noreferrer">PriceCharting</a>${patternCmUrl(c, v) ? `<a class="btn sm ghost" href="${esc(patternCmUrl(c, v))}" target="_blank" rel="noopener noreferrer">Cardmarket</a>` : ''}
-      ${c.patIds?.pokeball && c.patIds?.masterball ? `<button type="button" class="btn sm ghost" data-patswap="${esc(id)}" aria-pressed="${!!c.patSwap}" title="Cardmarket link and price for Poké Ball and Master Ball the wrong way round on this card? Tap to swap them (Cardmarket only)" aria-label="Cardmarket Poké Ball and Master Ball swapped">${c.patSwap ? 'Swapped ✓' : 'Swapped?'}</button>` : ''}
+      ${c.patIds?.pokeball && c.patIds?.masterball ? `<button type="button" class="btn sm ghost" data-patswap="${esc(id)}" aria-pressed="${cmSwapped(c)}" title="${typeof c.patSwap === 'boolean' ? 'Your setting. Tap to go back to automatic.' : cmSwapAuto(c) ? 'Cardmarket listings were the wrong way round in TCGdex and have been corrected automatically. Tap if that is wrong.' : 'Cardmarket link and price for Poké Ball and Master Ball the wrong way round? Tap to swap them (Cardmarket only).'}" aria-label="Cardmarket Poké Ball and Master Ball swap">${typeof c.patSwap === 'boolean' ? (c.patSwap ? 'Swapped (you) ✓' : 'Not swapped (you)') : cmSwapAuto(c) ? 'Auto-fixed ✓' : 'Swapped?'}</button>` : ''}
       ${c.custom ? '' : `<button type="button" class="btn sm ghost" data-tdcopy="${esc(id)}" title="Copy this card's raw TCGdex data to report a problem">Data</button>`}</span>
     ${x ? `<small class="muted">Your value: ${x.usd ? `$${x.usd.toFixed(2)} → ` : ''}set ${esc(x.at)}${feedLine ? ` · overrides ${feedLine.replace(/^Market /, 'market ')}` : ''}. Clear the box to use the market price.</small>`
       : feedLine ? `<small>${feedLine}. Type a value to override it.</small>` : `<small class="muted">${compact ? 'No market price yet — refresh prices, or look it up.' : 'No market price for this pattern yet. Refresh prices, or look it up and type a value.'}</small>`}</div>`;
 }
 document.addEventListener('click', async e => {
   const sw = e.target.closest?.('[data-patswap]'), cp = e.target.closest?.('[data-tdcopy]'); if (!sw && !cp) return;
-  if (sw) { const c = S.cards[sw.dataset.patswap]; if (!c) return; c.patSwap = !c.patSwap; if (!c.patSwap) delete c.patSwap; save();
-    toast(c.patSwap ? `${c.name}: Cardmarket's Poké Ball and Master Ball listings swapped for this card` : `${c.name}: swap undone`, 'success');
+  if (sw) { const c = S.cards[sw.dataset.patswap]; if (!c) return;
+    if (typeof c.patSwap === 'boolean') { delete c.patSwap; toast(`${c.name}: back to automatic — ${cmSwapAuto(c) ? 'listings corrected' : 'listings used as TCGdex has them'}`, 'success'); }
+    else { c.patSwap = !cmSwapAuto(c); toast(c.patSwap ? `${c.name}: Cardmarket's Poké Ball and Master Ball listings swapped` : `${c.name}: automatic correction turned off for this card`, 'success'); }
+    save();
     render(); if ($('#dlg-info')?.open && UI.infoId) openInfo(UI.infoId); if ($('#dlg-lot')?.open && typeof lotMarketNote === 'function') lotMarketNote(); return; }
   copyTdData(cp.dataset.tdcopy, cp);
 });
@@ -549,7 +565,7 @@ async function copyTdData(id, btn) {
     if (!j) text = `${c.name} (${c.id}): TCGdex has no card for ${tid || 'this card'}`;
     else { const vd = Array.isArray(j.variants_detailed) ? j.variants_detailed : [];
       text = [`PokéBinder ${CONFIG.version} · TCGdex data · ${c.lang || 'en'}/${j.id} ${j.name} (${j.rarity || '?'}) · set ${j.set?.name || '?'}`,
-        `app: versions ${variantsOf(c).join(', ')} · patterns read ${Object.keys(patternIdsFromTd(j)).join(', ') || 'none'}${c.patSwap ? ' · swapped by you' : ''}`,
+        `app: versions ${variantsOf(c).join(', ')} · patterns read ${Object.keys(patternIdsFromTd(j)).join(', ') || 'none'}${typeof c.patSwap === 'boolean' ? (c.patSwap ? ' · swapped by you' : ' · swap turned off by you') : cmSwapAuto(c) ? ' · Cardmarket auto-corrected (crossed with TCGplayer)' : ''}`,
         `variants: ${JSON.stringify(j.variants || null)}`,
         ...vd.map(d => `- ${d.type}${d.foil ? '/' + d.foil : ''}${(d.stamp || []).length ? ' stamp=' + d.stamp.join('+') : ''} cm=${d.thirdParty?.cardmarket ?? '-'} tcp=${d.thirdParty?.tcgplayer ?? '-'} · cm foil trend ${d.pricing?.cardmarket?.['trend-holo'] ?? '-'} · tcp ${Object.values(d.pricing?.tcgplayer || {}).find(x => x?.marketPrice)?.marketPrice ?? '-'}`)].join('\n'); }
   } catch (e) { text = `${c.name} (${c.id}): couldn't reach TCGdex (${e.message})`; }
@@ -607,10 +623,12 @@ function ownedTotals(col, onlyIds) {
 }
 /* Japanese print with the same artwork (same Pokémon, artist and rarity tier — see jpAlternatives), from the
    saved matches, skipping ones you've said aren't the same card. Cheapest with a usable price wins. */
-function bestJp(c) {
-  const hit = S.jpAlt?.[c?.id]; if (!hit || hit.v !== 3) return null;
-  let best = null;
-  for (const id of hit.ids) { if ((S.jpReject?.[c.id] || []).includes(id)) continue; const j = S.cards[id], pi = j && priceOf(j);
+/* Cheapest matching Japanese print (same Pokémon, artist and rarity tier). With a Poké Ball / Master Ball version,
+   the Japanese print's own pattern product (Cardmarket lists those separately, e.g. "White Flare JP: Additional"). */
+function bestJp(c, v) {
+  const hit = S.jpAlt?.[c?.id]; if (!hit || hit.v < 3) return null;
+  let best = null; const pat = isPattern(v);
+  for (const id of hit.ids) { if ((S.jpReject?.[c.id] || []).includes(id)) continue; const j = S.cards[id], pi = j && (pat ? priceOf(j, v) : priceOf(j));
     if (pi?.gbp > 0 && pi.status !== 'stale' && (!best || pi.gbp < best.pi.gbp)) best = { c:j, pi }; }
   return best;
 }
@@ -618,7 +636,7 @@ const jpEligible = (c, v) => !!(c && !c.custom && !c.lang && c.dex && c.artist &
 /* Value of one logged copy. A Japanese copy is valued at its matching Japanese print when one is known. Other
    languages use the card's Cardmarket price: the price guide has one set of figures per card, not per language. */
 function copyGbp(c, v, rec) {
-  if (rec?.l === 'ja') { const j = bestJp(c); if (j) return j.pi.gbp; }
+  if (rec?.l === 'ja') { const j = bestJp(c, v); if (j) return j.pi.gbp; }
   return priceOf(c, v)?.gbp ?? null;
 }
 /* One value snapshot per collection per day, for the Overview chart. Uses the latest prices you've fetched. */
@@ -677,6 +695,14 @@ async function loadFx(force) {
     if (force) toast(`Exchange rate updated: €1 = £${S.fx.eur.toFixed(4)} (ECB ${S.fx.date})`, 'success');
   } catch (e) { if (force || !S.fx) toast(`Couldn't get an exchange rate (${e.message}). ${S.fx ? 'Using the last one saved.' : 'Prices show in EUR/USD until it works, or set a rate in Settings.'}`, 'warn'); }
 }
+/* Find (or refresh) the matching Japanese prints for these English cards, so Japanese copies get Japanese prices. */
+async function refreshJpFor(ids, onProgress) {
+  const todo = [...new Set(ids)].map(id => S.cards[id]).filter(c => c && !c.custom && !c.lang && c.dex && c.artist); let n = 0;
+  for (let i = 0; i < todo.length; i += 6) await Promise.all(todo.slice(i, i + 6).map(async c => { try { await jpAlternatives(c); } catch { /* offline or busy: keep what we have */ } onProgress?.(++n, todo.length); }));
+  const jpIds = todo.flatMap(c => S.jpAlt?.[c.id]?.ids || []);
+  if (jpIds.length) await tcgdexPrices(jpIds).catch(() => 0);
+  return todo.length;
+}
 async function refreshPrices() {
   const col = active(); if (!col) return;
   const ids = col.cardIds.filter(id => S.cards[id] && !S.cards[id].custom);
@@ -693,6 +719,8 @@ async function refreshPrices() {
       $('#prog-value').textContent = `Checking ${missing.length} card(s) TCGdex couldn't price…`;
       try { (await apiFetchAll('(' + missing.slice(i, i + CONFIG.priceBatch).map(id => `id:"${id.replace(/"/g, '')}"`).join(' OR ') + ')')).forEach(mergeCard); } catch { break; }
     }
+    const jaIds = ids.filter(id => Object.values(col.copies?.[id] || {}).some(r => r?.l === 'ja' && r.q > 0));
+    if (jaIds.length) await refreshJpFor(jaIds, (n, t) => { $('#prog-value').textContent = `Matching Japanese prints for your Japanese copies… ${n} / ${t}`; });
     await loadFx(); save(); render(); recordSnapshot(col); if (UI.view === 'sets') renderView();
     const failed = tdFailed;
     toast(`Cardmarket prices refreshed for ${tdGot} of ${ids.length} cards${failed ? ` · ${failed} couldn't be checked (TCGdex busy or offline) — try again in a minute` : missing.length ? ` · ${missing.length} not found on TCGdex (shown with old prices, if any)` : ''}`, tdGot && !failed ? 'success' : 'warn');
@@ -849,12 +877,12 @@ const sameTier = (en, jp) => { const a = rarityTier(en.rarity, en.set_id), b = r
 async function jpAlternatives(c, signal) {
   if (!c.dex || !c.artist || c.lang) return [];
   S.jpAlt ||= {}; const hit = S.jpAlt[c.id];
-  if (hit && hit.v === 3 && Date.now() - hit.ts < 7 * 864e5) return hit.ids.map(id => S.cards[id]).filter(Boolean);
+  if (hit && hit.v >= 4 && Date.now() - hit.ts < 7 * 864e5) return hit.ids.map(id => S.cards[id]).filter(Boolean);
   const list = await tdJson('ja', `/cards?dexId=eq:${c.dex}&illustrator=${encodeURIComponent(c.artist)}`, signal) || [];
   const cards = (await tdFull(list.filter(b => b?.id && !isPocketSet(tdBriefSet(b))).slice(0, 12), 'ja', null, signal))
     .filter(x => x.dex === c.dex && normName(x.artist) === normName(c.artist) && sameTier(c, x));   // same Pokémon, same artist, same rarity tier
   cards.forEach(mergeCard);
-  S.jpAlt[c.id] = { v:3, ts:Date.now(), ids:cards.map(x => x.id) }; save();   // v3: earlier versions matched too loosely, so their results are ignored
+  S.jpAlt[c.id] = { v:4, ts:Date.now(), ids:cards.map(x => x.id) }; save();   // v3: stricter matching; v4: re-fetched with Poké Ball / Master Ball data
   return cards.map(x => S.cards[x.id]);
 }
 function dealEntries(col, cfg) {
@@ -1151,7 +1179,7 @@ function openInfo(entryId) {
     </div></div>
     <section class="inv" aria-label="Your copies">
       <div class="row" style="justify-content:space-between"><b>Your copies</b><span class="small muted">${t.copies ? `${t.copies} held${spares.length ? ` · ${spares.reduce((n, s) => n + s.n, 0)} spare` : ''}${t.value ? ` · worth ${GBP.format(t.value)}` : ''}${t.withPaid ? ` · <span class="${t.pl >= 0 ? 'up' : 'down'}">${t.pl >= 0 ? '+' : '−'}${GBP.format(Math.abs(t.pl))}</span>` : ''}` : 'None yet'}</span></div>
-      ${vlist.map(v => { const r = rec[v] || {}, pv = (r.l === 'ja' && bestJp(c)?.pi) || priceOf(c, v === 'any' ? primaryVariant(c, col) : v);
+      ${vlist.map(v => { const r = rec[v] || {}, pv = (r.l === 'ja' && bestJp(c, v === 'any' ? primaryVariant(c, col) : v)?.pi) || priceOf(c, v === 'any' ? primaryVariant(c, col) : v);
         return `<div class="inv-row" data-v="${v}">
           <div><span class="vn">${VARIANTS[v]}</span>${pv ? ` <span class="small muted">· ${priceHtml(pv)} each</span>` : ''}</div>
           <div class="stepper" role="group" aria-label="${VARIANTS[v]} quantity"><button type="button" data-q="-1" aria-label="One fewer">${ic('minus', 'sm')}</button><output>${r.q || 0}</output><button type="button" data-q="1" aria-label="One more">${ic('plus', 'sm')}</button></div>
@@ -1160,7 +1188,7 @@ function openInfo(entryId) {
             <input class="inp" data-f="p" inputmode="decimal" placeholder="Paid £ each" aria-label="${VARIANTS[v]} price paid per copy (£)" value="${r.p ? esc(r.p) : ''}">
             <input class="inp date" data-f="d" type="date" aria-label="${VARIANTS[v]} date paid" value="${esc(r.d || '')}">
             ${c.lang ? '' : `<select class="inp" data-f="l" aria-label="${VARIANTS[v]} language">${Object.entries(LANGS).map(([k, n]) => `<option value="${k}"${(r.l || 'en') === k ? ' selected' : ''}>${n}</option>`).join('')}</select>`}
-          </div>${isPattern(v) ? patternValueHtml(id, v, true) : ''}${r.q > 0 && r.l && r.l !== 'en' ? `<p class="small muted lang-note">${r.l === 'ja' ? (bestJp(c) ? `${LANGS.ja} copy — counts for this slot, valued at the matching Japanese print (${esc(bestJp(c).c.set_name)} ${esc(bestJp(c).c.number)}, ${GBP.format(bestJp(c).pi.gbp)}).` : `${LANGS.ja} copy — counts for this slot. No matching Japanese print found yet, so it's valued at the English price.`) : `${esc(LANGS[r.l])} copy — counts for this slot, valued at the card's Cardmarket price (Cardmarket doesn't split prices by language).`}</p>` : ''}</div>`; }).join('')}
+          </div>${isPattern(v) ? patternValueHtml(id, v, true) : ''}${r.q > 0 && r.l && r.l !== 'en' ? `<p class="small muted lang-note">${r.l === 'ja' ? (bestJp(c, v) ? `${LANGS.ja} copy — counts for this slot, valued at the matching Japanese print (${esc(bestJp(c, v).c.set_name)} ${esc(bestJp(c, v).c.number)}, ${GBP.format(bestJp(c, v).pi.gbp)}).` : `${LANGS.ja} copy — counts for this slot. No matching Japanese print found yet, so it's valued at the English price.`) : `${esc(LANGS[r.l])} copy — counts for this slot, valued at the card's Cardmarket price (Cardmarket doesn't split prices by language).`}</p>` : ''}</div>`; }).join('')}
       ${c.custom ? '' : `<div class="printings small"><b>Printings that exist</b> <button type="button" class="btn sm ghost" data-tdcopy="${esc(id)}" style="float:right">TCGdex data</button>
         <ul>${V_ALL.filter(v => c.variants?.includes(v) || c.vEv?.[v] || c.vHide?.includes(v)).map(v => { const hidden = c.vHide?.includes(v), srcs = c.vEv?.[v] || [], held = rec[v]?.q > 0;
           return `<li${hidden ? ' class="off"' : ''}><span><b>${VARIANTS[v]}</b> <span class="muted">${hidden ? 'hidden by you' : srcs.length ? 'per ' + esc(srcs.join(', ')) : 'listed'}</span></span>${held ? '<span class="muted">you have copies</span>' : `<button type="button" class="btn sm ghost" data-pv="${v}">${hidden ? 'Restore' : 'Not a real printing'}</button>`}</li>`; }).join('') || '<li class="muted">Not known yet — refresh this price to check.</li>'}</ul></div>`}
@@ -2400,7 +2428,7 @@ function sanitizeCard(k, c) {
   if (c.patPx && typeof c.patPx === 'object') { const px = {}, n = x => +x > 0 && +x < 1e6 ? +x : null, d = x => /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : '';
     for (const v of PATTERNS) { const x = c.patPx[v]; if (x && typeof x === 'object') { const r = { trendH:n(x.trendH), avg30H:n(x.avg30H), avg7H:n(x.avg7H), lowH:n(x.lowH), updated:d(x.updated), tcp:n(x.tcp), tcpUpd:d(x.tcpUpd) }; if (r.trendH || r.avg30H || r.avg7H || r.tcp) px[v] = r; } }
     if (Object.keys(px).length) out.patPx = px; }
-  if (c.patSwap === true) out.patSwap = true;
+  if (typeof c.patSwap === 'boolean') out.patSwap = c.patSwap;
   if (+c.tdParse > 0 && +c.tdParse < 100) out.tdParse = +c.tdParse;
   if (c.pp && typeof c.pp === 'object') { const pp = {}; for (const v of PATTERNS) { const x = c.pp[v]; if (x && +x.gbp > 0 && +x.gbp < 1e6) pp[v] = { gbp:Math.round(+x.gbp * 100) / 100, at:str(x.at, 10), ...(x.usd > 0 && x.usd < 1e6 ? { usd:Math.round(+x.usd * 100) / 100 } : {}) }; } if (Object.keys(pp).length) out.pp = pp; }
   if (Array.isArray(c.vHide)) out.vHide = c.vHide.filter(v => V_ALL.includes(v));
@@ -2902,7 +2930,8 @@ function labelSource(src) {
 function rulePrice(it) {
   const o = L(), g = priceOf(S.cards[it.id], it.v)?.gbp;
   if (g == null) return null;
-  const m = g * (typeof langFactor === 'function' && !S.cards[it.id]?.lang ? langFactor(it.lang) : 1);   // no language % on a card whose price is already for that language
+  const jp = it.lang === 'ja' && !S.cards[it.id]?.lang ? bestJp(S.cards[it.id], it.v) : null;   // a Japanese copy: its Japanese print's own price
+  const m = jp ? jp.pi.gbp : g * (typeof langFactor === 'function' && !S.cards[it.id]?.lang ? langFactor(it.lang) : 1);   // no language % on a card whose price is already for that language
   let x = m * (+o.pct || 100) / 100;
   const step = +o.round;
   if (step === 99) x = Math.max(0.99, Math.ceil(x) - 0.01);
@@ -3282,6 +3311,9 @@ async function boot() {
     if (!col.copies) { col.copies = {}; for (const cid of Object.keys(col.owned || {})) if (!cid.includes('|')) col.copies[cid] = { any:{ q:1 } }; }
     col.history ||= []; syncOwned(col); }
   try { pruneCaches(); } catch { /* never block start-up */ }
+  // v3.9.5: hand swaps made in v3.9.4 pre-date automatic detection; where TCGplayer can cross-check, go back to automatic
+  if (!S.settings.patMig) { let n = 0; for (const c of Object.values(S.cards)) if (c?.patSwap === true && c.patPx?.pokeball?.tcp && c.patPx?.masterball?.tcp) { delete c.patSwap; n++; }
+    S.settings.patMig = 1; if (n) setTimeout(() => toast(`${n} Poké Ball / Master Ball swap${n === 1 ? '' : 's'} you set now ${n === 1 ? 'uses' : 'use'} automatic detection`, 'info'), 600); }
   initVendorState(); delete S.trade;   // v2.6: the old trade lists move into the vendor area
   if (!S.collections[S.activeId]) S.activeId = S.order[0] || null;
   UI.view = S.settings.view === 'trade' ? 'vendor' : (S.settings.view || 'binder');

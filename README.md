@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.9.4
+# PokéBinder Studio v3.9.6
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -108,10 +108,23 @@ What gets flagged, biggest saving first:
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
 
+## v3.9.6: Japanese copies at Japanese prices
+- Cardmarket keeps Japanese and European printings apart, patterns included ("White Flare JP: Additional" vs "White Flare: Additional"), and their prices differ a lot.
+- **A Japanese copy of an English card** (binder copy, stock lot, purchase or trade-in set to Japanese) is now valued at its matching Japanese print: same Pokémon, artist and rarity tier, found on TCGdex. Poké Ball / Master Ball copies use that Japanese print's own pattern product. Your sticker rule and buying % apply to that price; the language % is not applied on top.
+- When there's no Japanese match, it falls back to the English price × your language % as before.
+- Matches are looked up when you refresh prices (binder or Stock), and straight away when you switch a purchase, trade-in or stock lot to Japanese. Cards added from a Japanese set were already priced from their own Japanese products.
+- Other European languages (French, German …) are sold under the same Cardmarket product as English, so they keep the English price × your language %.
+
+## v3.9.5: crossed Cardmarket listings fixed automatically
+- Your Data pastes showed TCGdex has Cardmarket's Poké Ball and Master Ball the wrong way round on many White Flare cards (Vanillish, Simisear, Heatmor, Swadloon), while TCGplayer agrees with the rarity order. Some cards are fine (Sewaddle, Servine, Snivy).
+- **Automatic correction:** when both Cardmarket and TCGplayer price both patterns and the crossed pairing fits at least 4× better than the straight one, the app uses Cardmarket's listings swapped (link and price). The button shows **Auto-fixed ✓**.
+- **Override:** tap the button to turn the correction off (or on) for one card; tap again to go back to automatic. Without TCGplayer prices (Japanese cards) there's nothing to cross-check, so those keep the amber warning and the manual button.
+- Hand swaps set in v3.9.4 are reset to automatic once, where TCGplayer can cross-check (your Servine swap was undoing correct data).
+
 ## v3.9.4: pattern data fixes
 - **Cards read by an older version are re-read.** Prices are normally re-checked at most once an hour; cards last read before pattern detection existed now re-read straight away, so their Poké Ball / Master Ball versions appear on the next refresh or look-up.
 - **Missing half of a pair:** when TCGdex lists only one pattern for a card, the vendor screens offer both, so a trade isn't blocked by a gap in TCGdex's data. The missing one has no market price; type a value. Binder pockets still follow TCGdex exactly.
-- **Swapped? button** (next to a pattern value): use it when a card's Cardmarket link and price for Poké Ball and Master Ball are the wrong way round (seen on Heatmor, Black Bolt). It swaps Cardmarket only, keeps TCGplayer's own mapping, survives price refreshes, and tap again to undo.
+- **Swapped? button** (next to a pattern value): swaps a card's Cardmarket link and price for Poké Ball and Master Ball (Cardmarket only). Automatic from v3.9.5.
 - **Data button** (and *TCGdex data* in a card's details) copies that card's raw TCGdex version list, with product numbers and prices, for reporting problems.
 
 ## v3.9.3: market prices for patterns
