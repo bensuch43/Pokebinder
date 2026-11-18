@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.9.3
+# PokéBinder Studio v3.9.4
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,12 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## v3.9.4: pattern data fixes
+- **Cards read by an older version are re-read.** Prices are normally re-checked at most once an hour; cards last read before pattern detection existed now re-read straight away, so their Poké Ball / Master Ball versions appear on the next refresh or look-up.
+- **Missing half of a pair:** when TCGdex lists only one pattern for a card, the vendor screens offer both, so a trade isn't blocked by a gap in TCGdex's data. The missing one has no market price; type a value. Binder pockets still follow TCGdex exactly.
+- **Swapped? button** (next to a pattern value): use it when a card's Cardmarket link and price for Poké Ball and Master Ball are the wrong way round (seen on Heatmor, Black Bolt). It swaps Cardmarket only, keeps TCGplayer's own mapping, survives price refreshes, and tap again to undo.
+- **Data button** (and *TCGdex data* in a card's details) copies that card's raw TCGdex version list, with product numbers and prices, for reporting problems.
 
 ## v3.9.3: market prices for patterns
 - Check v2 showed every Poké Ball / Master Ball pattern is its **own product on Cardmarket and TCGplayer**, with its own prices in TCGdex.

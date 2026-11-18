@@ -63,7 +63,8 @@ const lotMarket = l => mktFor(l.cardId, l.v, langOf(l));
 const vendorVariants = c => { const vs = variantsOf(c);
   // TCGdex now lists patterns: trust it when it has printing data for the card; otherwise offer both on Scarlet & Violet-era cards
   const known = Object.values(c?.vEv || {}).some(s => Array.isArray(s) && s.includes('TCGdex'));
-  if (!known && patternEra(c)) PATTERNS.forEach(p => { if (!vs.includes(p)) vs.push(p); });
+  // patterns come in pairs in these sets: if TCGdex lists one, offer the other too so a table trade isn't blocked by a gap in its data
+  if ((!known && patternEra(c)) || PATTERNS.some(p => vs.includes(p))) PATTERNS.forEach(p => { if (!vs.includes(p)) vs.push(p); });
   return vs; };
 const lotAsk = l => l.price > 0 ? l.price : rulePrice({ id:l.cardId, v:l.v, lang:langOf(l) });
 function buyOffer(cardId, v, lang) {

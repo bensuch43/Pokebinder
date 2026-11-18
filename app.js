@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.9.3',
+  version: '3.9.4',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -67,6 +67,7 @@ const VSHORT = { normal:'', holo:'Holo', reverse:'Rev', first:'1st', pokeball:'P
    No free feed prices them separately — TCGdex's Cardmarket figures are one "foil" price for every reverse —
    so they are never given a borrowed price: you set a value (typed in £, or $ straight from PriceCharting). */
 const PATTERNS = ['pokeball', 'masterball'];
+const TD_PARSE = 2;   // bump when the way TCGdex card data is read changes, so saved cards are re-read
 const isPattern = v => PATTERNS.includes(v);
 const V_ALL = ['normal', 'holo', 'reverse', 'first', ...PATTERNS];
 const patternEra = c => !!c && !c.custom && (c.release_date || '') >= '2023-01-01';   // patterns are a Scarlet & Violet-era thing
@@ -477,8 +478,11 @@ function pickCardmarket(c, variant) {
   return { hit, status, want };
 }
 /* Market figure for a pattern from its own product: Cardmarket foil columns or TCGplayer, by your price-source setting. */
+const patKey = (c, v) => c?.patSwap ? (v === 'pokeball' ? 'masterball' : 'pokeball') : v;   // your correction: this card's Cardmarket listings are the wrong way round
 function patternFeed(c, v) {
-  const f = c?.patPx?.[v]; if (!f) return null;
+  const fc = c?.patPx?.[patKey(c, v)], ft = c?.patPx?.[v];   // the swap applies to Cardmarket only; TCGplayer keeps its own mapping
+  if (!fc && !ft) return null;
+  const f = { trendH:fc?.trendH, avg30H:fc?.avg30H, avg7H:fc?.avg7H, lowH:fc?.lowH, updated:fc?.updated || '', tcp:ft?.tcp, tcpUpd:ft?.tcpUpd || '' };
   const MAP = { trend:'trendH', avg30:'avg30H', avg7:'avg7H', low:'lowH' }, want = figPref();
   let fig = want, cmV = f[MAP[want]];
   if (!(cmV > 0)) for (const k of FIG_FALLBACK) if (f[MAP[k]] > 0) { fig = k; cmV = f[MAP[k]]; break; }
@@ -498,8 +502,8 @@ function patternPrice(c, v) {
   const notes = [];
   if (f.cm?.gbp && f.tp?.gbp) { const hi = Math.max(f.cm.gbp, f.tp.gbp), lo = Math.min(f.cm.gbp, f.tp.gbp); if (hi > 1 && hi / lo > 3) notes.push(`Cardmarket ${GBP.format(f.cm.gbp)} vs TCGplayer ${GBP.format(f.tp.gbp)}`); }
   const pb = patternFeed(c, 'pokeball')?.gbp, mb = patternFeed(c, 'masterball')?.gbp;
-  if (pb > 1 && mb > 0 && pb > mb * 1.5) notes.push('Poké Ball priced above Master Ball');
-  const fresh = isFresh(f.date), status = notes.length || f.fallbackSrc ? 'fallback' : fresh ? 'good' : 'stale';
+  if (!c.patSwap && pb > 1 && mb > 0 && pb > mb * 1.5) notes.push('Poké Ball priced above Master Ball');
+  const fresh = isFresh(f.date || f.cm?.date || f.tp?.date), status = notes.length || f.fallbackSrc ? 'fallback' : fresh ? 'good' : 'stale';
   return { gbp:f.gbp, native:f.native, cur:f.cur, src:f.src, metric:f.metric, fig:f.fig, want:figPref(), date:f.date, url:patternCmUrl(c, v) || pricechartingUrl(c, v), fetched:c.price?.td?.fetched || '',
     status, stale:status === 'stale', fallback:status === 'fallback', trend:null, note:notes.join('; '), feed:f };
 }
@@ -522,9 +526,36 @@ function patternValueHtml(id, v, compact) {
   const feedLine = mk ? `Market ${priceHtml(mk)}${other ? ` <span class="muted">(${other})</span>` : ''}${mk.note ? `<br><span class="down">${esc(mk.note)}: listings may be mixed up, check before trading</span>` : ''}` : '';
   return `<div class="ppv${compact ? ' compact' : ''}"><span class="small ppv-h">${esc(VARIANTS[v])} value <span class="muted">${compact ? '(£ or $)' : '(£, or $ from PriceCharting)'}</span></span>
     <input class="inp" data-ppv="${esc(id)}" data-v="${v}" inputmode="decimal" autocomplete="off" placeholder="${f ? 'market price' : 'e.g. 8.50'}" value="${x ? x.gbp.toFixed(2) : ''}" aria-label="${esc(VARIANTS[v])} value in pounds, or dollars with a $ sign">
-    <span class="ppv-links"><a class="btn sm ghost" href="${esc(pricechartingUrl(c, v))}" target="_blank" rel="noopener noreferrer">PriceCharting</a>${patternCmUrl(c, v) ? `<a class="btn sm ghost" href="${esc(patternCmUrl(c, v))}" target="_blank" rel="noopener noreferrer">Cardmarket</a>` : ''}</span>
+    <span class="ppv-links"><a class="btn sm ghost" href="${esc(pricechartingUrl(c, v))}" target="_blank" rel="noopener noreferrer">PriceCharting</a>${patternCmUrl(c, v) ? `<a class="btn sm ghost" href="${esc(patternCmUrl(c, v))}" target="_blank" rel="noopener noreferrer">Cardmarket</a>` : ''}
+      ${c.patIds?.pokeball && c.patIds?.masterball ? `<button type="button" class="btn sm ghost" data-patswap="${esc(id)}" aria-pressed="${!!c.patSwap}" title="Cardmarket link and price for Poké Ball and Master Ball the wrong way round on this card? Tap to swap them (Cardmarket only)" aria-label="Cardmarket Poké Ball and Master Ball swapped">${c.patSwap ? 'Swapped ✓' : 'Swapped?'}</button>` : ''}
+      ${c.custom ? '' : `<button type="button" class="btn sm ghost" data-tdcopy="${esc(id)}" title="Copy this card's raw TCGdex data to report a problem">Data</button>`}</span>
     ${x ? `<small class="muted">Your value: ${x.usd ? `$${x.usd.toFixed(2)} → ` : ''}set ${esc(x.at)}${feedLine ? ` · overrides ${feedLine.replace(/^Market /, 'market ')}` : ''}. Clear the box to use the market price.</small>`
       : feedLine ? `<small>${feedLine}. Type a value to override it.</small>` : `<small class="muted">${compact ? 'No market price yet — refresh prices, or look it up.' : 'No market price for this pattern yet. Refresh prices, or look it up and type a value.'}</small>`}</div>`;
+}
+document.addEventListener('click', async e => {
+  const sw = e.target.closest?.('[data-patswap]'), cp = e.target.closest?.('[data-tdcopy]'); if (!sw && !cp) return;
+  if (sw) { const c = S.cards[sw.dataset.patswap]; if (!c) return; c.patSwap = !c.patSwap; if (!c.patSwap) delete c.patSwap; save();
+    toast(c.patSwap ? `${c.name}: Cardmarket's Poké Ball and Master Ball listings swapped for this card` : `${c.name}: swap undone`, 'success');
+    render(); if ($('#dlg-info')?.open && UI.infoId) openInfo(UI.infoId); if ($('#dlg-lot')?.open && typeof lotMarketNote === 'function') lotMarketNote(); return; }
+  copyTdData(cp.dataset.tdcopy, cp);
+});
+/* One card's raw TCGdex version data, for reporting a problem (copied to the clipboard). */
+async function copyTdData(id, btn) {
+  const c = S.cards[id]; if (!c) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
+  let text;
+  try {
+    const tid = c.tdId || await tcgdexIdFor(c), j = tid ? await tdJson(c.lang || 'en', `/cards/${encodeURIComponent(tid)}`) : null;
+    if (!j) text = `${c.name} (${c.id}): TCGdex has no card for ${tid || 'this card'}`;
+    else { const vd = Array.isArray(j.variants_detailed) ? j.variants_detailed : [];
+      text = [`PokéBinder ${CONFIG.version} · TCGdex data · ${c.lang || 'en'}/${j.id} ${j.name} (${j.rarity || '?'}) · set ${j.set?.name || '?'}`,
+        `app: versions ${variantsOf(c).join(', ')} · patterns read ${Object.keys(patternIdsFromTd(j)).join(', ') || 'none'}${c.patSwap ? ' · swapped by you' : ''}`,
+        `variants: ${JSON.stringify(j.variants || null)}`,
+        ...vd.map(d => `- ${d.type}${d.foil ? '/' + d.foil : ''}${(d.stamp || []).length ? ' stamp=' + d.stamp.join('+') : ''} cm=${d.thirdParty?.cardmarket ?? '-'} tcp=${d.thirdParty?.tcgplayer ?? '-'} · cm foil trend ${d.pricing?.cardmarket?.['trend-holo'] ?? '-'} · tcp ${Object.values(d.pricing?.tcgplayer || {}).find(x => x?.marketPrice)?.marketPrice ?? '-'}`)].join('\n'); }
+  } catch (e) { text = `${c.name} (${c.id}): couldn't reach TCGdex (${e.message})`; }
+  try { await navigator.clipboard.writeText(text); toast('TCGdex data copied — paste it into the chat', 'success'); }
+  catch { $('#tdc-out').value = text; $('#tdc-status').textContent = 'Couldn’t copy automatically: select the text below and copy it.'; $('#tdc-copy').disabled = false; if (!$('#dlg-tdcheck').open) $('#dlg-tdcheck').showModal(); }
+  if (btn) { btn.disabled = false; btn.textContent = btn.closest('.ppv') ? 'Data' : 'TCGdex data'; }
 }
 document.addEventListener('change', e => {
   const el = e.target; if (!el?.dataset?.ppv) return;
@@ -611,7 +642,7 @@ const cardmarketUrl = (c, fallbackName) => c?.cmId > 0 ? `https://www.cardmarket
 /* Cardmarket product id from a TCGdex card: card-level, first variant that has one, or the price record. */
 const cmIdOf = j => [j?.thirdParty?.cardmarket, ...(j?.variants_detailed || []).map(v => v?.thirdParty?.cardmarket), j?.pricing?.cardmarket?.idProduct]
   .map(Number).find(n => Number.isInteger(n) && n > 0 && n < 1e9) || null;
-const patternCmUrl = (c, v) => c?.patIds?.[v]?.own ? `https://www.cardmarket.com/en/Pokemon/Products?idProduct=${c.patIds[v].cm}` : '';
+const patternCmUrl = (c, v) => { const k = patKey(c, v); return c?.patIds?.[k]?.own ? `https://www.cardmarket.com/en/Pokemon/Products?idProduct=${c.patIds[k].cm}` : ''; };
 const tcgplayerUrl = c => c?.name ? `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(`${c.name} ${c.set_name || ''}`.trim())}` : '';
 const QUALITY = { good:'Good data', fallback:'Fallback figure', stale:'Stale price', manual:'Your value' };
 function qualityText(pi) {
@@ -1130,7 +1161,7 @@ function openInfo(entryId) {
             <input class="inp date" data-f="d" type="date" aria-label="${VARIANTS[v]} date paid" value="${esc(r.d || '')}">
             ${c.lang ? '' : `<select class="inp" data-f="l" aria-label="${VARIANTS[v]} language">${Object.entries(LANGS).map(([k, n]) => `<option value="${k}"${(r.l || 'en') === k ? ' selected' : ''}>${n}</option>`).join('')}</select>`}
           </div>${isPattern(v) ? patternValueHtml(id, v, true) : ''}${r.q > 0 && r.l && r.l !== 'en' ? `<p class="small muted lang-note">${r.l === 'ja' ? (bestJp(c) ? `${LANGS.ja} copy — counts for this slot, valued at the matching Japanese print (${esc(bestJp(c).c.set_name)} ${esc(bestJp(c).c.number)}, ${GBP.format(bestJp(c).pi.gbp)}).` : `${LANGS.ja} copy — counts for this slot. No matching Japanese print found yet, so it's valued at the English price.`) : `${esc(LANGS[r.l])} copy — counts for this slot, valued at the card's Cardmarket price (Cardmarket doesn't split prices by language).`}</p>` : ''}</div>`; }).join('')}
-      ${c.custom ? '' : `<div class="printings small"><b>Printings that exist</b>
+      ${c.custom ? '' : `<div class="printings small"><b>Printings that exist</b> <button type="button" class="btn sm ghost" data-tdcopy="${esc(id)}" style="float:right">TCGdex data</button>
         <ul>${V_ALL.filter(v => c.variants?.includes(v) || c.vEv?.[v] || c.vHide?.includes(v)).map(v => { const hidden = c.vHide?.includes(v), srcs = c.vEv?.[v] || [], held = rec[v]?.q > 0;
           return `<li${hidden ? ' class="off"' : ''}><span><b>${VARIANTS[v]}</b> <span class="muted">${hidden ? 'hidden by you' : srcs.length ? 'per ' + esc(srcs.join(', ')) : 'listed'}</span></span>${held ? '<span class="muted">you have copies</span>' : `<button type="button" class="btn sm ghost" data-pv="${v}">${hidden ? 'Restore' : 'Not a real printing'}</button>`}</li>`; }).join('') || '<li class="muted">Not known yet — refresh this price to check.</li>'}</ul></div>`}
       ${addable.length ? `<div class="row"><select id="i-addv" class="inp" style="flex:1" aria-label="Add a printing">${addable.map(v => `<option value="${v}">${VARIANTS[v]}</option>`).join('')}</select><button class="btn sm" id="i-addv-go">${ic('plus', 'sm')}Add printing</button></div>` : ''}
@@ -1330,7 +1361,7 @@ async function tcgdexIdFor(c) {
 }
 /* Fetch TCGdex prices for these cards (skips ones fetched in the last hour). Never throws; returns how many updated. */
 async function tcgdexPrices(ids, onProgress, signal) {
-  const todo = [...new Set(ids)].map(id => S.cards[id]).filter(c => c && !c.custom && !(c.price?.td?.fetched && Date.now() - Date.parse(c.price.td.fetched) < 36e5));
+  const todo = [...new Set(ids)].map(id => S.cards[id]).filter(c => c && !c.custom && !((c.tdParse || 0) >= TD_PARSE && c.price?.td?.fetched && Date.now() - Date.parse(c.price.td.fetched) < 36e5));   // older parse: re-read now
   let done = 0, got = 0; tdFailed = 0;
   const work = async c => {
     try {
@@ -1339,7 +1370,7 @@ async function tcgdexPrices(ids, onProgress, signal) {
       if (c.tdId) {
         const j = await tdJson(c.lang || 'en', `/cards/${encodeURIComponent(c.tdId)}`, signal), cm = j?.pricing?.cardmarket;
         if (j && cmIdOf(j)) c.cmId = cmIdOf(j);
-        if (j) { applyPrintings(c, printingsFromTd(j, c.release_date)); const pid = patternIdsFromTd(j); if (Object.keys(pid).length) c.patIds = pid; const ppx = patternPricesFromTd(j); if (Object.keys(ppx).length) c.patPx = ppx; }
+        if (j) { applyPrintings(c, printingsFromTd(j, c.release_date)); const pid = patternIdsFromTd(j); if (Object.keys(pid).length) c.patIds = pid; else delete c.patIds; const ppx = patternPricesFromTd(j); if (Object.keys(ppx).length) c.patPx = ppx; else delete c.patPx; c.tdParse = TD_PARSE; }
         if (cm) { c.price ||= {}; c.price.td = tdPrice(cm); c.price.fetched = c.price.td.fetched; got++; }
       }
     } catch (e) { if (e.name !== 'AbortError') tdFailed++; /* offline or TCGdex busy: keep what we have, and say so */ }
@@ -2369,6 +2400,8 @@ function sanitizeCard(k, c) {
   if (c.patPx && typeof c.patPx === 'object') { const px = {}, n = x => +x > 0 && +x < 1e6 ? +x : null, d = x => /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : '';
     for (const v of PATTERNS) { const x = c.patPx[v]; if (x && typeof x === 'object') { const r = { trendH:n(x.trendH), avg30H:n(x.avg30H), avg7H:n(x.avg7H), lowH:n(x.lowH), updated:d(x.updated), tcp:n(x.tcp), tcpUpd:d(x.tcpUpd) }; if (r.trendH || r.avg30H || r.avg7H || r.tcp) px[v] = r; } }
     if (Object.keys(px).length) out.patPx = px; }
+  if (c.patSwap === true) out.patSwap = true;
+  if (+c.tdParse > 0 && +c.tdParse < 100) out.tdParse = +c.tdParse;
   if (c.pp && typeof c.pp === 'object') { const pp = {}; for (const v of PATTERNS) { const x = c.pp[v]; if (x && +x.gbp > 0 && +x.gbp < 1e6) pp[v] = { gbp:Math.round(+x.gbp * 100) / 100, at:str(x.at, 10), ...(x.usd > 0 && x.usd < 1e6 ? { usd:Math.round(+x.usd * 100) / 100 } : {}) }; } if (Object.keys(pp).length) out.pp = pp; }
   if (Array.isArray(c.vHide)) out.vHide = c.vHide.filter(v => V_ALL.includes(v));
   if (c.vEv && typeof c.vEv === 'object') { out.vEv = {}; const OK = ['TCGdex', 'TCGplayer', 'Cardmarket', 'Pokémon TCG API'];
