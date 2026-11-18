@@ -1,4 +1,4 @@
-# PokéBinder Studio v3.9.6
+# PokéBinder Studio v3.9.7
 
 Track Pokémon TCG collections down to the printing, plan which binder pocket each card goes in, value everything in GBP, work out trades, and share want or trade lists as a link. Print binder guides and placeholder cards. Runs entirely in the browser and works offline once it's loaded.
 
@@ -107,6 +107,13 @@ What gets flagged, biggest saving first:
 - **⚠ A copy is listed at £x:** the cheapest listing is under half the trend. It's any condition (often Poor), so it's shown as a prompt to check, never as a deal on its own.
 
 **Limits:** these are Cardmarket-wide averages from its hourly price guide, not individual listings, so condition, seller country and postage aren't accounted for. Cards that rarely sell can show big swings. The first scan of a large collection takes a minute or two; Japanese lookups are cached for a week.
+
+## v3.9.7: polish
+- **What's new:** after an update, a short card lists what changed since the version you last opened (up to three releases). It's skipped on first use. Edit `WHATS_NEW` at the top of the patterns section in app.js each release.
+- **Undo instead of "Are you sure?":** deleting a collection, removing stock and voiding a ledger entry now happen straight away with an Undo button (7 seconds). Reset everything, replacing from a backup, and reloading the app still ask first, because Undo can't bring those back.
+- **Screen changes ease across** (bottom navigation and vendor tabs) using the browser's View Transitions, in Safari 18+ and Chrome. Older browsers, and Reduce Motion, get an instant change.
+- **Completion celebration:** filling the last pocket of a collection gives a one-second burst from the progress ring and a message, once per session. Reduce Motion shows the message only.
+- Deliberately not added: count-up numbers, theme sweep, command palette, animated re-sorting and container queries. They add motion or code without helping you collect or trade on a phone.
 
 ## v3.9.6: Japanese copies at Japanese prices
 - Cardmarket keeps Japanese and European printings apart, patterns included ("White Flare JP: Additional" vs "White Flare: Additional"), and their prices differ a lot.

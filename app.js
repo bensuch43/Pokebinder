@@ -3,7 +3,7 @@
    CONFIG — change here, nothing else is environment-specific
    ========================================================================== */
 const CONFIG = {
-  version: '3.9.6',
+  version: '3.9.7',
   apiBase: 'https://api.pokemontcg.io/v2',
   pageSize: 250,           // API max
   maxRetries: 2,           // for 429 / 5xx, exponential back-off (then TCGdex takes over for searches)
@@ -66,6 +66,47 @@ const VSHORT = { normal:'', holo:'Holo', reverse:'Rev', first:'1st', pokeball:'P
 /* Poké Ball / Master Ball reverse-holo patterns (Prismatic Evolutions, Black Bolt / White Flare, Japanese 151 …).
    No free feed prices them separately — TCGdex's Cardmarket figures are one "foil" price for every reverse —
    so they are never given a borrowed price: you set a value (typed in £, or $ straight from PriceCharting). */
+/* What's new: shown once after an update (newest first). Keep each list to three plain bullets. */
+const WHATS_NEW = [
+  { v:'3.9.7', items:['Deleting a collection, removing stock or voiding a ledger entry happens straight away, with Undo, instead of an "Are you sure?" step.',
+    'Switching screens and vendor tabs eases across instead of jumping (off when Reduce Motion is on).',
+    'Fill every pocket in a collection and it gets a small celebration, once.'] },
+  { v:'3.9.6', items:['Japanese copies of English cards are valued at the matching Japanese print, Poké Ball / Master Ball included.',
+    'Crossed Cardmarket Poké Ball / Master Ball listings are spotted and fixed automatically (button shows Auto-fixed).'] },
+  { v:'3.9.3', items:['Poké Ball and Master Ball versions are detected from TCGdex and priced from their own Cardmarket / TCGplayer products.',
+    'Stock has Refresh prices; Move spares lets you pick which spares go.'] }
+];
+const cmpVer = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; } return 0; };
+function showWhatsNew() {
+  const seen = S.settings.seenVersion; S.settings.seenVersion = CONFIG.version;
+  if (!seen) { save(); return; }   // first run: nothing to announce
+  const news = WHATS_NEW.filter(n => cmpVer(n.v, seen) > 0 && cmpVer(n.v, CONFIG.version) <= 0).slice(0, 3);
+  save(); if (!news.length) return;
+  $('#wn-title').textContent = `What's new in ${CONFIG.version}`;
+  $('#wn-body').innerHTML = news.map(n => `<section><h4 class="small muted" style="margin:0 0 4px">Version ${esc(n.v)}</h4><ul class="wn-list">${n.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></section>`).join('')
+    + '<p class="small muted" style="margin:0">Full release notes are in README.md alongside the app.</p>';
+  $('#dlg-new').showModal();
+}
+/* Animated screen changes where the browser supports them (Safari 18+, Chrome); instant otherwise or with Reduce Motion. */
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const withTransition = fn => document.startViewTransition && !reducedMotion() ? document.startViewTransition(fn) : fn();
+/* A small, one-off celebration when a collection's last pocket is filled. Canvas, no library; skipped with Reduce Motion. */
+function celebrate(anchor) {
+  if (reducedMotion()) return;
+  const cv = document.createElement('canvas'), dpr = Math.min(2, devicePixelRatio || 1), W = innerWidth, H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr; cv.setAttribute('aria-hidden', 'true');
+  cv.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:200';
+  document.body.append(cv); const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const r = anchor?.getBoundingClientRect?.() || { left:W / 2, top:H / 3, width:0, height:0 }, ox = r.left + r.width / 2, oy = r.top + r.height / 2;
+  const css = getComputedStyle(document.documentElement), cols = ['--accent', '--ok', '--info', '--warn'].map(v => css.getPropertyValue(v).trim() || '#c9a227');
+  const P = Array.from({ length:70 }, (_, i) => { const a = Math.PI * (1.1 + Math.random() * 0.8), sp = 4 + Math.random() * 6;
+    return { x:ox, y:oy, vx:Math.cos(a) * sp, vy:Math.sin(a) * sp, s:4 + Math.random() * 4, rot:Math.random() * 6, vr:(Math.random() - .5) * .3, c:cols[i % cols.length] }; });
+  const t0 = performance.now();
+  const step = t => { const k = (t - t0) / 1100; g.clearRect(0, 0, W, H);
+    for (const p of P) { p.vy += 0.22; p.x += p.vx; p.y += p.vy; p.rot += p.vr; g.save(); g.globalAlpha = Math.max(0, 1 - k); g.translate(p.x, p.y); g.rotate(p.rot); g.fillStyle = p.c; g.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); g.restore(); }
+    if (k < 1) requestAnimationFrame(step); else cv.remove(); };
+  requestAnimationFrame(step);
+}
 const PATTERNS = ['pokeball', 'masterball'];
 const TD_PARSE = 2;   // bump when the way TCGdex card data is read changes, so saved cards are re-read
 const isPattern = v => PATTERNS.includes(v);
@@ -734,6 +775,9 @@ function renderProgress() {
   const base = fa ? cards.filter(c => matches(c, col)) : cards;
   const own = base.filter(c => col.owned[c.id]).length, p = pct(own, base.length);
   $('#prog-text').textContent = `${own} / ${base.length}`;
+  if (!fa) { const done = base.length > 0 && own === base.length, was = (UI.prevDone ||= {})[col.id];
+    if (done && was === false && !(UI.cheered ||= {})[col.id]) { UI.cheered[col.id] = true; celebrate($('#st-ring')); toast(`“${col.name}” is complete: every pocket filled`, 'success'); }
+    UI.prevDone[col.id] = done; }
   $('#st-ring').style.setProperty('--p', p); $('#st-ring').dataset.label = p + '%';
   $('#prog-bar').style.width = p + '%';
   const pages = UI.layout.pages.length, spares = col.cardIds.reduce((n, id) => n + (S.cards[id] ? spareCount(col, S.cards[id]) : 0), 0);
@@ -1128,8 +1172,7 @@ $('#col-dup').addEventListener('click', () => {
 });
 $('#col-delete').addEventListener('click', async () => {
   const col = active();
-  if (!await confirmDlg('Delete collection?', `"${col.name}" and its ${col.cardIds.length} cards, quantities and prices paid will be removed. Cards stay cached for other collections.`, 'Delete')) return;
-  const snap = snapshot();
+  const snap = snapshot();   // undo instead of an "Are you sure?" step
   delete S.collections[col.id]; S.order = S.order.filter(id => id !== col.id); S.activeId = S.order[0] || null;
   $('#dlg-col').close(); save(); render(); undoable(`Deleted "${col.name}"`, snap);
 });
@@ -3159,7 +3202,7 @@ function toast(msg, type = 'info', action) {
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-act],[data-view],[data-close],[data-vact]'); if (!t) return;
   if (t.hasAttribute('data-close')) { t.closest('dialog').close(); return; }
-  if (t.dataset.view) { UI.view = S.settings.view = t.dataset.view; save(); render(); window.scrollTo({ top:0 }); return; }
+  if (t.dataset.view) { const v = t.dataset.view; withTransition(() => { UI.view = S.settings.view = v; save(); render(); window.scrollTo({ top:0 }); }); return; }
   if (t.dataset.vact) { vendorAction(t, e); return; }
   const id = t.closest('[data-id]')?.dataset.id;
   switch (t.dataset.act) {
@@ -3318,6 +3361,7 @@ async function boot() {
   if (!S.collections[S.activeId]) S.activeId = S.order[0] || null;
   UI.view = S.settings.view === 'trade' ? 'vendor' : (S.settings.view || 'binder');
   applyTheme();
+  setTimeout(() => { try { showWhatsNew(); } catch { /* never block start-up */ } }, 500);
   if (location.search.includes('r=')) history.replaceState(null, '', location.pathname + location.hash);
   if (location.hash.startsWith('#s=')) await openShare(location.hash.slice(3));
   else render();

@@ -209,7 +209,7 @@ function record(t, method, lines, total, note = '') {
   const txn = { id:'t_' + uid(), t, at:new Date().toISOString(), method, lines, total:round2(total), note, void:false };
   S.ledger.push(txn); return txn;
 }
-function voidTxn(id) {
+function voidTxn(id, snap) {
   const t = S.ledger.find(x => x.id === id); if (!t || t.void) return;
   let short = 0;
   for (const l of t.lines) {
@@ -218,7 +218,9 @@ function voidTxn(id) {
     else { const lot = findLot(l.cardId, l.v || 'normal', l.c || '', langOf(l)); const n = lot ? takeFromStock(lot.id, l.q) : 0; short += l.q - n; }
   }
   t.void = true; t.voidAt = new Date().toISOString(); save(); renderVendor();
-  toast(`${t.t === 'sale' ? 'Sale' : t.t === 'buy' ? 'Purchase' : 'Trade'} voided — stock put back${short ? ` (${short} card${short === 1 ? '' : 's'} already gone from stock)` : ''}`, short ? 'warn' : 'success');
+  const msg = `${t.t === 'sale' ? 'Sale' : t.t === 'buy' ? 'Purchase' : 'Trade'} voided — stock put back${short ? ` (${short} card${short === 1 ? '' : 's'} already gone from stock)` : ''}`;
+  if (snap) { undoable(msg, snap); return; }
+  toast(msg, short ? 'warn' : 'success');
 }
 
 /* ==========================================================================
@@ -400,7 +402,7 @@ function vSave(full = true) { save(); if (full) renderVendor(); }
 async function vendorAction(t, e) {
   const V = S.vendor, a = t.dataset.vact, i = +t.dataset.i;
   switch (a) {
-    case 'tab': V.vtab = VTABS[t.dataset.tab] ? t.dataset.tab : 'stock'; vSave(); break;
+    case 'tab': { const tab = VTABS[t.dataset.tab] ? t.dataset.tab : 'stock'; withTransition(() => { V.vtab = tab; vSave(); }); break; }
     case 'toggle-add': V.adding = !V.adding; vSave(); break;
     case 'lot': openLot(t.dataset.lot); break;
     case 'basket-add': {
@@ -427,7 +429,7 @@ async function vendorAction(t, e) {
     case 'trm': V[t.dataset.side]?.splice(i, 1); vSave(); break;
     case 'tclear': V.give = []; V.get = []; vSave(); break;
     case 'trade': completeTrade(); break;
-    case 'void': if (await confirmDlg('Void this entry?', 'It stays in the ledger, crossed out and excluded from totals, and the stock changes it made are reversed.', 'Void')) voidTxn(t.dataset.id); break;
+    case 'void': voidTxn(t.dataset.id, snapshot()); break;   // straight away, with Undo
     case 'move-spares': moveSpares(); break;
     case 'stock-refresh': refreshStockPrices(); break;
     case 'pcv': UI.pcV[t.dataset.card] = t.dataset.v; renderVendor(); break;
@@ -598,7 +600,6 @@ $('#lot-save').addEventListener('click', () => {
 });
 $('#lot-del').addEventListener('click', async () => {
   const { lotId } = UI.lot; if (!lotId) return;
-  if (!await confirmDlg('Remove from stock?', 'Removes these copies from your stock without recording a sale.', 'Remove')) return;
   const snap = snapshot(); delete S.stock[lotId]; $('#dlg-lot').close(); vSave(); undoable('Removed from stock', snap);
 });
 $('#lot-sell').addEventListener('click', () => { const { lotId } = UI.lot; $('#dlg-lot').close(); if (lotId) vendorAction({ dataset:{ vact:'basket-add', lot:lotId } }); });

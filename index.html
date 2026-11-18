@@ -142,6 +142,8 @@ label.f{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin:
 .pocket{position:relative;aspect-ratio:63/88;border-radius:9px;border:1px solid var(--line);background:linear-gradient(110deg,var(--surface-2) 30%,var(--elev) 50%,var(--surface-2) 70%) 0 0/300% 100%;overflow:hidden;display:block;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:transform var(--t) var(--ease),box-shadow var(--t),border-color var(--t)}
 @media (prefers-reduced-motion: no-preference){ .pocket{animation:shimmer 1.6s linear infinite} .pocket.loaded,.pocket.empty{animation:none} }
 @keyframes shimmer{to{background-position:-150% 0}}
+.wn-list{margin:0;padding-left:18px;display:grid;gap:6px}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.2s;animation-timing-function:ease-out}
 @media (hover:hover){ .pocket:not(.empty):hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--line-2)} }
 .pocket:active{transform:scale(.98)}
 .pocket.empty{border-style:dashed;background:transparent;cursor:default;animation:none}
@@ -926,6 +928,11 @@ legend{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:upperc
     <textarea id="tdc-out" class="inp mono" readonly rows="12" style="font-size:12px;min-height:220px;white-space:pre;overflow:auto" aria-label="Check results" placeholder="Results appear here"></textarea>
   </div>
   <div class="dlg-f"><button class="btn" id="tdc-copy" disabled>Copy results</button><button class="btn primary" id="tdc-run">Run check</button></div>
+</div></dialog>
+<dialog id="dlg-new"><div class="dlg">
+  <div class="dlg-h"><h3 id="wn-title">What's new</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <div class="dlg-b" id="wn-body"></div>
+  <div class="dlg-f"><button class="btn primary" data-close>Got it</button></div>
 </div></dialog>
 <dialog id="dlg-vclear"><div class="dlg">
   <div class="dlg-h"><h3>Clear vendor data</h3><button class="x" data-close aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
